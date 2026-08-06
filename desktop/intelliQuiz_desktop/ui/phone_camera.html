@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b6b58" />
+    <title>IntelliQuiz · Phone camera</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Syne:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #e8f2ee;
+        --muted: #9bb5ac;
+        --accent: #2ec4a0;
+        --danger: #ff7b72;
+        --ok: #3dd68c;
+        --font-brand: "Syne", sans-serif;
+        --font-sans: "Figtree", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        font-family: var(--font-sans);
+        color: var(--ink);
+        background:
+          radial-gradient(700px 420px at 20% 0%, rgba(46, 196, 160, 0.22), transparent 55%),
+          linear-gradient(165deg, #0a1612 0%, #10241e 55%, #0c1a16 100%);
+      }
+      .wrap {
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        padding: 1.15rem 1rem 1.35rem;
+        max-width: 520px;
+        margin: 0 auto;
+      }
+      .brand {
+        font-family: var(--font-brand);
+        font-weight: 700;
+        font-size: 1.4rem;
+        letter-spacing: -0.03em;
+        color: var(--accent);
+        margin: 0;
+      }
+      .steps {
+        display: grid;
+        gap: 0.35rem;
+        margin: 0.75rem 0 1rem;
+        font-size: 0.88rem;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .steps strong { color: var(--ink); }
+      .stage {
+        position: relative;
+        flex: 1;
+        min-height: 48vh;
+        border-radius: 18px;
+        overflow: hidden;
+        background: #050d0b;
+        border: 1px solid rgba(232, 242, 238, 0.12);
+      }
+      video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+        transform: scaleX(-1);
+      }
+      .lock-banner {
+        position: absolute;
+        left: 0.7rem;
+        right: 0.7rem;
+        bottom: 0.7rem;
+        padding: 0.7rem 0.85rem;
+        border-radius: 12px;
+        background: rgba(5, 13, 11, 0.78);
+        backdrop-filter: blur(8px);
+        font-size: 0.9rem;
+        line-height: 1.35;
+        font-weight: 600;
+      }
+      .lock-banner.ok { border: 1px solid rgba(61, 214, 140, 0.5); color: var(--ok); }
+      .lock-banner.wait { border: 1px solid rgba(155, 181, 172, 0.35); color: var(--muted); }
+      .lock-banner.err { border: 1px solid rgba(255, 123, 114, 0.45); color: var(--danger); }
+      .footer { margin-top: 1rem; display: grid; gap: 0.5rem; }
+      button {
+        font: inherit;
+        font-weight: 650;
+        border: 0;
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+        cursor: pointer;
+      }
+      .primary {
+        background: linear-gradient(135deg, #1f8f78, #0b6b58);
+        color: #f4fffb;
+      }
+      .ghost {
+        background: transparent;
+        border: 1px solid rgba(232, 242, 238, 0.18);
+        color: var(--ink);
+      }
+      .status { margin: 0; font-size: 0.82rem; color: var(--muted); text-align: center; }
+      .done-note {
+        margin-top: 0.35rem;
+        padding: 0.75rem 0.85rem;
+        border-radius: 12px;
+        background: rgba(61, 214, 140, 0.12);
+        border: 1px solid rgba(61, 214, 140, 0.35);
+        color: var(--ok);
+        font-weight: 650;
+        text-align: center;
+        display: none;
+      }
+      .done-note.show { display: block; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <p class="brand">IntelliQuiz</p>
+      <div class="steps">
+        <div><strong>1.</strong> If you see a security warning → Advanced → Proceed / Continue</div>
+        <div><strong>2.</strong> Tap Allow when asked for camera</div>
+        <div><strong>3.</strong> Wait for “Paired”, keep this page open</div>
+      </div>
+      <div class="stage">
+        <video id="preview" playsinline muted autoplay></video>
+        <div class="lock-banner wait" id="banner">Allow camera to continue…</div>
+      </div>
+      <p class="done-note" id="doneNote">Paired. Leave this screen open and continue on the computer.</p>
+      <div class="footer">
+        <button class="primary" type="button" id="btnStart">Allow camera &amp; pair</button>
+        <button class="ghost" type="button" id="btnFlip">Flip camera</button>
+        <p class="status" id="status">Connecting to exam PC…</p>
+      </div>
+    </div>
+    <canvas id="snap" width="640" height="480" style="display:none"></canvas>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const sessionId = params.get("session_id") || "";
+      const token = params.get("pairing_token") || "";
+      const wsUrl = params.get("ws") || "";
+
+      const $ = (id) => document.getElementById(id);
+      let stream = null;
+      let facing = "environment";
+      let ws = null;
+      let paired = false;
+      let frameTimer = null;
+      let aliveTimer = null;
+
+      function setBanner(text, cls) {
+        const el = $("banner");
+        el.textContent = text;
+        el.className = "lock-banner " + cls;
+      }
+
+      function sendJson(obj) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        try { ws.send(JSON.stringify(obj)); } catch { /* ignore */ }
+      }
+
+      function notifyLost(reason) {
+        sendJson({ type: "camera_lost", reason });
+        paired = false;
+        setBanner("Camera off — tap below to allow again", "err");
+        $("doneNote").classList.remove("show");
+        $("btnStart").textContent = "Allow camera again";
+        $("status").textContent = "Quiz on the computer is paused until camera returns";
+      }
+
+      async function startCamera() {
+        // Phones block getUserMedia on plain http://LAN — must be https://
+        if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setBanner("Camera blocked by the phone (needs HTTPS)", "err");
+          $("status").textContent =
+            "Open the https:// link from the exam QR. If you see a certificate warning, tap Advanced → Proceed, then Allow camera.";
+          $("btnStart").textContent = "Reload after accepting certificate";
+          $("btnStart").onclick = () => location.reload();
+          return;
+        }
+        try {
+          if (stream) stream.getTracks().forEach((t) => t.stop());
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: { ideal: facing },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          });
+          $("preview").srcObject = stream;
+          stream.getVideoTracks().forEach((track) => {
+            track.onended = () => notifyLost("Phone camera permission ended");
+          });
+          $("btnStart").textContent = paired ? "Camera locked" : "Camera on — pairing…";
+          setBanner(paired ? "Camera locked for exam" : "Camera on — pairing with exam PC…", paired ? "ok" : "wait");
+          $("status").textContent = paired ? "Paired · keep this page open" : "Connecting…";
+          connectWs();
+          startFrameLoop();
+          startAliveLoop();
+        } catch (err) {
+          notifyLost("Camera permission denied");
+          setBanner("Camera blocked — tap Allow and try again", "err");
+          $("status").textContent = String(err.message || err);
+          $("btnStart").textContent = "Try again — allow camera";
+        }
+      }
+
+      function connectWs() {
+        if (!wsUrl || !sessionId || !token) {
+          setBanner("Invalid link — scan the QR from the exam PC again", "err");
+          return;
+        }
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+        try {
+          ws = new WebSocket(wsUrl);
+        } catch (err) {
+          setBanner("Cannot reach exam PC — same Wi‑Fi?", "err");
+          $("status").textContent = String(err.message || err);
+          return;
+        }
+        ws.binaryType = "arraybuffer";
+        ws.onopen = () => {
+          sendJson({ type: "pair", session_id: sessionId, pairing_token: token });
+        };
+        ws.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data.type === "pair_ok") {
+              paired = true;
+              setBanner("Paired · camera locked for exam", "ok");
+              $("status").textContent = "Success — go back to the computer and tap Start quiz";
+              $("doneNote").classList.add("show");
+              $("btnStart").textContent = "Paired — leave this open";
+            } else if (data.type === "pair_fail") {
+              setBanner("Pairing failed — scan the QR again", "err");
+            }
+          } catch { /* ignore */ }
+        };
+        ws.onclose = () => {
+          setBanner("Connection lost — reconnecting…", "wait");
+          setTimeout(connectWs, 1500);
+        };
+        ws.onerror = () => {
+          $("status").textContent = "Network error — use the same Wi‑Fi as the exam PC";
+        };
+      }
+
+      function startAliveLoop() {
+        if (aliveTimer) return;
+        aliveTimer = setInterval(() => {
+          if (!stream) return;
+          const live = stream.getVideoTracks().some((t) => t.readyState === "live");
+          if (!live) {
+            notifyLost("Phone camera track ended");
+            return;
+          }
+          sendJson({ type: "camera_alive" });
+        }, 2500);
+      }
+
+      function startFrameLoop() {
+        if (frameTimer) return;
+        const canvas = $("snap");
+        const ctx = canvas.getContext("2d");
+        frameTimer = setInterval(() => {
+          if (!paired || !ws || ws.readyState !== WebSocket.OPEN || !stream) return;
+          const video = $("preview");
+          if (!video.videoWidth) return;
+          canvas.width = Math.min(640, video.videoWidth);
+          canvas.height = Math.round(canvas.width * (video.videoHeight / video.videoWidth));
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (!blob || !ws || ws.readyState !== WebSocket.OPEN) return;
+            blob.arrayBuffer().then((buf) => {
+              try { ws.send(buf); } catch { /* ignore */ }
+            });
+          }, "image/jpeg", 0.55);
+        }, 4000);
+      }
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          // Keep alive while backgrounded briefly; if camera stops, track.onended fires.
+          sendJson({ type: "camera_alive" });
+        }
+      });
+
+      window.addEventListener("pagehide", () => {
+        sendJson({ type: "camera_lost", reason: "Phone page closed" });
+      });
+
+      $("btnStart").onclick = () => startCamera();
+      $("btnFlip").onclick = async () => {
+        facing = facing === "environment" ? "user" : "environment";
+        await startCamera();
+      };
+
+      if (sessionId && token && wsUrl) {
+        startCamera();
+      } else {
+        setBanner("Scan the exam QR on the computer to open this page", "err");
+        $("btnStart").textContent = "Waiting for valid link…";
+        $("btnStart").disabled = true;
+      }
+    </script>
+  </body>
+</html>

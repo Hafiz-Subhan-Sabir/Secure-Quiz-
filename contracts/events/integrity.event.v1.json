@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intelliquiz.local/schemas/integrity.event.v1.json",
+  "title": "IntegrityEventV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "event_id", "session_id", "type", "ts", "severity", "payload"],
+  "properties": {
+    "schema": {
+      "const": "integrity.event.v1"
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "gesture_risk",
+        "gaze_away",
+        "multi_face",
+        "no_face",
+        "app_violation",
+        "android_env_anomaly",
+        "heartbeat",
+        "submit"
+      ]
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "severity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "payload": {
+      "type": "object"
+    },
+    "client": {
+      "type": "object",
+      "properties": {
+        "desktop_version": { "type": "string" },
+        "android_paired": { "type": "boolean" },
+        "model_version": { "type": "string" }
+      }
+    }
+  }
+}

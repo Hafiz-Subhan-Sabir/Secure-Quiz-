@@ -1,0 +1,104 @@
+{
+  "model": "mlp",
+  "accuracy": 0.9692307692307692,
+  "macro_f1": 0.9690368111420742,
+  "weighted_f1": 0.9690368111420743,
+  "cv_accuracy_mean": 0.932636295743092,
+  "cv_accuracy_std": 0.024236747187010063,
+  "mean_predicted_risk": 0.4196153846153846,
+  "model_path": "artifacts\\models\\mlp_20260804T065958Z.joblib",
+  "confusion_matrix": "artifacts\\reports\\cm_mlp_20260804T065958Z.png",
+  "per_class": {
+    "SBR": {
+      "precision": 0.9090909090909091,
+      "recall": 1.0,
+      "f1": 0.9523809523809523,
+      "support": 10,
+      "proctoring_risk_weight": 0.15
+    },
+    "SBL": {
+      "precision": 1.0,
+      "recall": 0.9,
+      "f1": 0.9473684210526315,
+      "support": 10,
+      "proctoring_risk_weight": 0.15
+    },
+    "MO": {
+      "precision": 0.9090909090909091,
+      "recall": 1.0,
+      "f1": 0.9523809523809523,
+      "support": 10,
+      "proctoring_risk_weight": 0.55
+    },
+    "LP": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "proctoring_risk_weight": 0.35
+    },
+    "DB": {
+      "precision": 1.0,
+      "recall": 0.9,
+      "f1": 0.9473684210526315,
+      "support": 10,
+      "proctoring_risk_weight": 0.2
+    },
+    "S": {
+      "precision": 1.0,
+      "recall": 0.8,
+      "f1": 0.8888888888888888,
+      "support": 10,
+      "proctoring_risk_weight": 0.1
+    },
+    "N": {
+      "precision": 0.8333333333333334,
+      "recall": 1.0,
+      "f1": 0.9090909090909091,
+      "support": 10,
+      "proctoring_risk_weight": 0.7
+    },
+    "RE": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "proctoring_risk_weight": 0.25
+    },
+    "F": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "proctoring_risk_weight": 0.2
+    },
+    "SH": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "proctoring_risk_weight": 0.85
+    },
+    "B&S": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "proctoring_risk_weight": 0.3
+    },
+    "RE&MO": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "proctoring_risk_weight": 0.6
+    },
+    "W&HT": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "proctoring_risk_weight": 0.9
+    }
+  }
+}

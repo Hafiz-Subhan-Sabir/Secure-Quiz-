@@ -1,0 +1,1 @@
+"""IntelliQuiz API application package."""

@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IntelliQuiz · Student Desktop (Preview)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Syne:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --shell-w: 92vw;
+        --shell-h: 92vh;
+        --ink: #13201b;
+        --muted: #5d6f67;
+        --line: rgba(19, 32, 27, 0.1);
+        --accent: #0b6b58;
+        --accent-2: #1f8f78;
+        --panel: #fbfcfb;
+        --danger: #b42318;
+        --warn: #b86a1c;
+        --ok: #1f7a4d;
+        --font-brand: "Syne", sans-serif;
+        --font-sans: "Figtree", sans-serif;
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: var(--font-sans);
+        color: var(--ink);
+        background:
+          radial-gradient(900px 520px at 12% 10%, rgba(31, 143, 120, 0.2), transparent 58%),
+          linear-gradient(160deg, #e7efe9, #dfe8e3 55%, #e4ebe8);
+      }
+      .shell {
+        width: var(--shell-w);
+        height: var(--shell-h);
+        max-width: 1600px;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: 0 18px 50px rgba(19, 32, 27, 0.12);
+        overflow: hidden;
+        animation: in 520ms var(--ease) both;
+      }
+      @keyframes in {
+        from { opacity: 0; transform: translateY(12px) scale(0.985); }
+        to { opacity: 1; transform: none; }
+      }
+      .top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.95rem 1.25rem;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand {
+        font-family: var(--font-brand);
+        font-weight: 700;
+        font-size: 1.3rem;
+        color: var(--accent);
+        letter-spacing: -0.03em;
+        margin: 0;
+      }
+      .meta { color: var(--muted); font-size: 0.88rem; margin: 0.15rem 0 0; }
+      .badge-row { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: end; }
+      .badge {
+        font-size: 0.72rem;
+        font-weight: 700;
+        padding: 0.28rem 0.55rem;
+        border-radius: 999px;
+        background: rgba(19, 32, 27, 0.06);
+        color: var(--muted);
+      }
+      .badge.on { background: rgba(31, 122, 77, 0.12); color: var(--ok); }
+      .badge.warn { background: rgba(184, 106, 28, 0.14); color: var(--warn); }
+      .badge.danger { background: rgba(180, 35, 24, 0.12); color: var(--danger); }
+      .stage { min-height: 0; overflow: auto; padding: 1.25rem; }
+      .hidden { display: none !important; }
+      h1, h2 { font-family: var(--font-brand); letter-spacing: -0.03em; }
+      h1 { margin: 0 0 0.5rem; font-size: clamp(1.4rem, 2vw, 1.85rem); }
+      h2 { margin: 0 0 0.65rem; font-size: 1.05rem; }
+      .lead { color: var(--muted); line-height: 1.5; max-width: 58ch; }
+      .primary, .ghost {
+        border-radius: 11px;
+        padding: 0.7rem 1rem;
+        font-weight: 650;
+        cursor: pointer;
+        font: inherit;
+      }
+      .primary {
+        background: linear-gradient(180deg, var(--accent-2), var(--accent));
+        color: #f4fffb;
+        border: 0;
+      }
+      .ghost {
+        background: transparent;
+        border: 1px solid var(--line);
+        color: var(--ink);
+      }
+      .danger-btn {
+        background: #fff;
+        border: 1px solid rgba(180, 35, 24, 0.35);
+        color: var(--danger);
+        border-radius: 11px;
+        padding: 0.65rem 0.9rem;
+        font-weight: 650;
+        cursor: pointer;
+        font: inherit;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+        padding: 1.15rem 1.2rem;
+        max-width: 520px;
+      }
+      .field { display: grid; gap: 0.35rem; margin-bottom: 0.75rem; }
+      .field span { font-size: 0.82rem; color: var(--muted); }
+      .field input {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.7rem 0.85rem;
+        font: inherit;
+      }
+      .steps {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+      }
+      .step-pill {
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0.3rem 0.6rem;
+        border-radius: 999px;
+        background: rgba(19, 32, 27, 0.05);
+        color: var(--muted);
+      }
+      .step-pill.active { background: rgba(11, 107, 88, 0.14); color: var(--accent); }
+      .step-pill.done { background: rgba(31, 122, 77, 0.12); color: var(--ok); }
+
+      /* Exam layout */
+      .exam-layout {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 1rem;
+        min-height: calc(var(--shell-h) - 140px);
+      }
+      .question-pane {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+        padding: 1.2rem 1.3rem;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        min-height: 0;
+      }
+      .choices { display: grid; gap: 0.55rem; margin-top: 1rem; }
+      .choice {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 0.85rem 1rem;
+        cursor: pointer;
+        transition: border-color 160ms var(--ease), transform 160ms var(--ease);
+      }
+      .choice:hover, .choice.on {
+        border-color: rgba(11, 107, 88, 0.45);
+        transform: translateX(3px);
+      }
+      .nav-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+        margin-top: 1.1rem;
+        padding-top: 0.9rem;
+        border-top: 1px solid var(--line);
+      }
+      .side {
+        display: grid;
+        gap: 0.75rem;
+        align-content: start;
+      }
+      .side-card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #f4f8f5;
+        padding: 0.9rem;
+      }
+      .cam {
+        position: relative;
+        aspect-ratio: 4/3;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        overflow: hidden;
+        background: #12241f;
+        color: rgba(244, 255, 251, 0.8);
+        display: grid;
+        place-items: center;
+        font-size: 0.82rem;
+        text-align: center;
+        padding: 0.5rem;
+      }
+      .cam video, .cam canvas, .cam img.snap {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .cam .label {
+        position: absolute;
+        left: 8px;
+        bottom: 8px;
+        z-index: 2;
+        background: rgba(0,0,0,0.55);
+        color: #fff;
+        font-size: 0.7rem;
+        font-weight: 700;
+        padding: 0.2rem 0.45rem;
+        border-radius: 6px;
+      }
+      .cam.flash::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: rgba(255,255,255,0.55);
+        animation: flash 350ms ease-out;
+        z-index: 3;
+      }
+      @keyframes flash {
+        from { opacity: 1; }
+        to { opacity: 0; }
+      }
+      .check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; font-size: 0.86rem; }
+      .check-list li {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.35rem 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .check-list li:last-child { border-bottom: 0; }
+      .ok { color: var(--ok); font-weight: 700; }
+      .bad { color: var(--danger); font-weight: 700; }
+      .mid { color: var(--warn); font-weight: 700; }
+      .evidence {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.4rem;
+      }
+      .evidence figure {
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        background: #fff;
+      }
+      .evidence img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; }
+      .evidence figcaption {
+        font-size: 0.65rem;
+        padding: 0.25rem 0.35rem;
+        color: var(--muted);
+        line-height: 1.3;
+      }
+      .alert {
+        border: 1px solid rgba(180, 35, 24, 0.3);
+        background: rgba(180, 35, 24, 0.06);
+        color: var(--danger);
+        border-radius: 10px;
+        padding: 0.55rem 0.7rem;
+        font-size: 0.84rem;
+        font-weight: 600;
+      }
+      .qr-box {
+        width: 180px;
+        height: 180px;
+        border-radius: 12px;
+        border: 1px dashed rgba(11, 107, 88, 0.4);
+        display: grid;
+        place-items: center;
+        background:
+          repeating-linear-gradient(0deg, #13201b 0 8px, #fff 8px 16px),
+          repeating-linear-gradient(90deg, #13201b 0 8px, #fff 8px 16px);
+        background-blend-mode: multiply;
+        background-size: 16px 16px, 16px 16px;
+        color: #fff;
+        font-weight: 700;
+        text-shadow: 0 1px 2px #000;
+      }
+      .center-wrap { display: grid; place-items: center; min-height: 70%; }
+      .actions { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 1rem; }
+      .note {
+        margin-top: 0.85rem;
+        padding: 0.7rem 0.8rem;
+        border-radius: 10px;
+        background: rgba(11, 107, 88, 0.08);
+        color: var(--ink);
+        font-size: 0.86rem;
+        line-height: 1.45;
+      }
+      @media (max-width: 960px) {
+        .exam-layout { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="top">
+        <div>
+          <p class="brand">IntelliQuiz</p>
+          <p class="meta" id="topMeta">Student Desktop · Preview (how the quiz looks)</p>
+        </div>
+        <div class="badge-row" id="badges">
+          <span class="badge" id="bFace">Face: waiting</span>
+          <span class="badge" id="bPhone">Phone cam: not paired</span>
+          <span class="badge" id="bApps">Apps: unchecked</span>
+          <span class="badge" id="bRisk">Risk: —</span>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="steps" id="steps">
+          <span class="step-pill active" data-step="login">1. Sign in</span>
+          <span class="step-pill" data-step="face">2. Face check</span>
+          <span class="step-pill" data-step="qr">3. Phone QR</span>
+          <span class="step-pill" data-step="exam">4. Take quiz</span>
+        </div>
+
+        <!-- LOGIN -->
+        <section id="view-login" class="center-wrap">
+          <div class="card">
+            <h1>Student sign in</h1>
+            <p class="lead">This is the Desktop exam app — not the Admin website. You take the quiz here.</p>
+            <label class="field"><span>Email</span><input id="email" value="student@intelliquiz.dev" /></label>
+            <label class="field"><span>Password</span><input id="password" type="password" value="Student123!" /></label>
+            <div class="actions">
+              <button class="primary" type="button" id="btnLogin">Continue to face check</button>
+            </div>
+            <p class="note">Preview mode: no real server login required. Use this screen to review the student UI.</p>
+          </div>
+        </section>
+
+        <!-- FACE -->
+        <section id="view-face" class="hidden">
+          <div class="exam-layout">
+            <div class="card" style="max-width: none">
+              <h1>Face verification</h1>
+              <p class="lead">
+                Keep your face centered. The AI checks that a real person is present before the quiz starts.
+                Allow camera access when the browser asks.
+              </p>
+              <div class="cam" id="faceCam" style="max-width: 420px; margin-top: 1rem">
+                <video id="faceVideo" autoplay playsinline muted></video>
+                <span class="label">Laptop webcam</span>
+              </div>
+              <div class="actions">
+                <button class="primary" type="button" id="btnFaceOk">Face verified — continue</button>
+                <button class="ghost" type="button" id="btnSkipCam">Skip camera (UI only)</button>
+              </div>
+              <p class="note">
+                Security: if no face / multiple faces are detected later, IntelliQuiz raises risk and can auto-save a photo.
+              </p>
+            </div>
+            <aside class="side">
+              <div class="side-card">
+                <h2>What is checked</h2>
+                <ul class="check-list">
+                  <li><span>Single face visible</span><span class="mid" id="cFace">checking…</span></li>
+                  <li><span>Face centered</span><span class="mid" id="cCenter">checking…</span></li>
+                  <li><span>Lighting OK</span><span class="mid" id="cLight">checking…</span></li>
+                </ul>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- QR -->
+        <section id="view-qr" class="hidden">
+          <div class="exam-layout">
+            <div class="card" style="max-width: none">
+              <h1>Pair phone camera (QR)</h1>
+              <p class="lead">
+                Open <strong>IntelliQuiz Mobile</strong> only — not Chrome, ChatGPT, or Notes.
+                Scan this QR to link the phone as a side/rear room camera. The QR does not open study help.
+              </p>
+              <div class="qr-box" aria-hidden="true">IQ PAIR</div>
+              <div class="actions">
+                <button class="primary" type="button" id="btnPaired">Phone paired — start quiz</button>
+              </div>
+              <p class="note">
+                After pairing, the phone stays in camera-lock mode for proctoring. It should not browse the web or open AI apps during the exam.
+              </p>
+            </div>
+            <aside class="side">
+              <div class="side-card">
+                <h2>Why phone camera?</h2>
+                <p class="meta" style="margin:0; line-height:1.45">
+                  Laptop webcam has blind spots. The phone covers the side/rear of the room so someone standing behind you is harder to hide.
+                </p>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- EXAM -->
+        <section id="view-exam" class="hidden">
+          <div class="exam-layout">
+            <div class="question-pane">
+              <div>
+                <p class="meta" id="qProgress">Question 1 of 3</p>
+                <h1 id="qText">Loading…</h1>
+                <div class="choices" id="qChoices"></div>
+                <div id="liveAlert" class="alert hidden" style="margin-top: 0.9rem"></div>
+              </div>
+              <div class="nav-row">
+                <button class="ghost" type="button" id="btnPrev">Previous</button>
+                <span class="meta" id="timer">42:00 remaining</span>
+                <div class="actions" style="margin:0">
+                  <button class="danger-btn" type="button" id="btnSimGesture">Simulate abnormal face gesture</button>
+                  <button class="primary" type="button" id="btnNext">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <aside class="side">
+              <div class="side-card">
+                <h2>Live security</h2>
+                <ul class="check-list">
+                  <li><span>FaceGest AI</span><span class="ok">active</span></li>
+                  <li><span>Blocked apps</span><span class="ok" id="appsStatus">locked</span></li>
+                  <li><span>Phone camera</span><span class="ok">paired</span></li>
+                  <li><span>Integrity risk</span><span class="ok" id="riskStatus">12%</span></li>
+                </ul>
+              </div>
+
+              <div class="side-card">
+                <h2>Laptop webcam</h2>
+                <div class="cam" id="examCam">
+                  <video id="examVideo" autoplay playsinline muted></video>
+                  <canvas id="snapCanvas" class="hidden"></canvas>
+                  <span class="label">Primary camera</span>
+                </div>
+              </div>
+
+              <div class="side-card">
+                <h2>Phone room camera</h2>
+                <div class="cam" id="phoneCam">
+                  Side / rear environment feed
+                  <span class="label">Android</span>
+                </div>
+              </div>
+
+              <div class="side-card">
+                <h2>Auto-captured evidence</h2>
+                <p class="meta" style="margin:0 0 0.5rem">
+                  When an abnormal gesture is detected, a <strong>webcam photo</strong> and optional <strong>screen snapshot</strong> are saved for the admin report.
+                </p>
+                <div class="evidence" id="evidence"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const questions = [
+        {
+          q: "Which control best reduces webcam blind spots during a proctored exam?",
+          choices: [
+            "Disable the primary webcam",
+            "Pair a secondary mobile camera via QR handshake",
+            "Lower AI gaze sensitivity only",
+            "Allow Discord for support chat",
+          ],
+          answer: 1,
+        },
+        {
+          q: "What should happen when the student shakes their head and looks away?",
+          choices: [
+            "Nothing — head movement is always ignored",
+            "Open ChatGPT to help the student",
+            "Raise risk and auto-capture a webcam photo for review",
+            "Delete the student’s answers",
+          ],
+          answer: 2,
+        },
+        {
+          q: "What is the phone QR code used for?",
+          choices: [
+            "Opening study notes in a browser",
+            "Pairing IntelliQuiz Mobile as a room camera only",
+            "Downloading AI helper apps",
+            "Sharing answers with classmates",
+          ],
+          answer: 1,
+        },
+      ];
+
+      let step = "login";
+      let qIndex = 0;
+      let selected = {};
+      let risk = 12;
+      let stream = null;
+      let seconds = 42 * 60;
+
+      const $ = (id) => document.getElementById(id);
+
+      function setStep(name) {
+        step = name;
+        ["login", "face", "qr", "exam"].forEach((s) => {
+          $("view-" + s).classList.toggle("hidden", s !== name);
+        });
+        document.querySelectorAll(".step-pill").forEach((el) => {
+          const s = el.dataset.step;
+          el.classList.remove("active", "done");
+          const order = ["login", "face", "qr", "exam"];
+          if (s === name) el.classList.add("active");
+          else if (order.indexOf(s) < order.indexOf(name)) el.classList.add("done");
+        });
+        $("topMeta").textContent =
+          name === "exam"
+            ? "Sample Integrity Exam · live student view"
+            : "Student Desktop · Preview (how the quiz looks)";
+      }
+
+      function setBadge(id, text, cls) {
+        const el = $(id);
+        el.textContent = text;
+        el.className = "badge " + (cls || "");
+      }
+
+      async function startCamera(videoEl) {
+        try {
+          if (!stream) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          }
+          videoEl.srcObject = stream;
+          return true;
+        } catch (e) {
+          videoEl.parentElement.querySelector(".label").textContent = "Camera blocked / unavailable";
+          return false;
+        }
+      }
+
+      function renderQuestion() {
+        const item = questions[qIndex];
+        $("qProgress").textContent = `Question ${qIndex + 1} of ${questions.length}`;
+        $("qText").textContent = item.q;
+        const box = $("qChoices");
+        box.innerHTML = "";
+        item.choices.forEach((c, i) => {
+          const div = document.createElement("div");
+          div.className = "choice" + (selected[qIndex] === i ? " on" : "");
+          div.textContent = c;
+          div.onclick = () => {
+            selected[qIndex] = i;
+            renderQuestion();
+          };
+          box.appendChild(div);
+        });
+      }
+
+      function updateRisk(n, reason) {
+        risk = Math.min(99, n);
+        const el = $("riskStatus");
+        el.textContent = risk + "%";
+        el.className = risk >= 65 ? "bad" : risk >= 40 ? "mid" : "ok";
+        setBadge("bRisk", "Risk: " + risk + "%", risk >= 65 ? "danger" : risk >= 40 ? "warn" : "on");
+        if (reason) {
+          const alert = $("liveAlert");
+          alert.textContent = reason;
+          alert.classList.remove("hidden");
+        }
+      }
+
+      function captureEvidence(kind, caption) {
+        const examCam = $("examCam");
+        examCam.classList.remove("flash");
+        void examCam.offsetWidth;
+        examCam.classList.add("flash");
+
+        const video = $("examVideo");
+        const canvas = $("snapCanvas");
+        let dataUrl = "";
+        if (video.videoWidth) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          canvas.getContext("2d").drawImage(video, 0, 0);
+          dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        } else {
+          // Placeholder if camera unavailable
+          dataUrl =
+            "data:image/svg+xml;utf8," +
+            encodeURIComponent(
+              `<svg xmlns='http://www.w3.org/2000/svg' width='320' height='240'><rect width='100%' height='100%' fill='#123'/><text x='16' y='40' fill='#fff' font-size='16'>${kind}</text><text x='16' y='70' fill='#9cf' font-size='12'>${caption}</text></svg>`
+            );
+        }
+
+        const fig = document.createElement("figure");
+        const img = document.createElement("img");
+        img.src = dataUrl;
+        img.alt = caption;
+        const cap = document.createElement("figcaption");
+        cap.textContent = caption;
+        fig.appendChild(img);
+        fig.appendChild(cap);
+        $("evidence").prepend(fig);
+
+        // Also simulate a screen snapshot entry
+        if (kind === "gesture") {
+          const fig2 = document.createElement("figure");
+          const img2 = document.createElement("img");
+          img2.src =
+            "data:image/svg+xml;utf8," +
+            encodeURIComponent(
+              `<svg xmlns='http://www.w3.org/2000/svg' width='320' height='240'><rect width='100%' height='100%' fill='#0b3d34'/><text x='16' y='40' fill='#fff' font-size='15'>Screen snapshot</text><text x='16' y='70' fill='#b7d5cc' font-size='12'>Exam window captured with gesture event</text></svg>`
+            );
+          const cap2 = document.createElement("figcaption");
+          cap2.textContent = "Screen snapshot · with face event";
+          fig2.appendChild(img2);
+          fig2.appendChild(cap2);
+          $("evidence").prepend(fig2);
+        }
+      }
+
+      $("btnLogin").onclick = () => {
+        setStep("face");
+        startCamera($("faceVideo")).then((ok) => {
+          $("cFace").textContent = ok ? "OK" : "manual";
+          $("cFace").className = ok ? "ok" : "mid";
+          $("cCenter").textContent = ok ? "OK" : "manual";
+          $("cCenter").className = ok ? "ok" : "mid";
+          $("cLight").textContent = "OK";
+          $("cLight").className = "ok";
+          setBadge("bFace", ok ? "Face: camera on" : "Face: preview", ok ? "on" : "warn");
+        });
+      };
+
+      $("btnSkipCam").onclick = () => {
+        setBadge("bFace", "Face: skipped (UI)", "warn");
+        $("cFace").textContent = "skipped";
+        $("cFace").className = "mid";
+        setStep("qr");
+      };
+
+      $("btnFaceOk").onclick = () => {
+        setBadge("bFace", "Face: verified", "on");
+        setStep("qr");
+      };
+
+      $("btnPaired").onclick = async () => {
+        setBadge("bPhone", "Phone cam: paired", "on");
+        setBadge("bApps", "Apps: locked", "on");
+        setBadge("bRisk", "Risk: 12%", "on");
+        setStep("exam");
+        renderQuestion();
+        await startCamera($("examVideo"));
+      };
+
+      $("btnPrev").onclick = () => {
+        if (qIndex > 0) {
+          qIndex -= 1;
+          renderQuestion();
+        }
+      };
+
+      $("btnNext").onclick = () => {
+        if (qIndex < questions.length - 1) {
+          qIndex += 1;
+          renderQuestion();
+          $("liveAlert").classList.add("hidden");
+        } else {
+          alert("Preview complete. In the real app, answers + evidence sync to Admin for review.");
+        }
+      };
+
+      $("btnSimGesture").onclick = () => {
+        updateRisk(risk + 28, "Abnormal face gesture detected (e.g. head shake / looking away). Webcam photo + screen snapshot saved.");
+        captureEvidence("gesture", "Webcam · abnormal gesture");
+        $("phoneCam").textContent = "Android also flagged room motion";
+      };
+
+      // simple countdown for realism
+      setInterval(() => {
+        if (step !== "exam") return;
+        seconds = Math.max(0, seconds - 1);
+        const m = String(Math.floor(seconds / 60)).padStart(2, "0");
+        const s = String(seconds % 60).padStart(2, "0");
+        $("timer").textContent = `${m}:${s} remaining`;
+      }, 1000);
+
+      setStep("login");
+    </script>
+  </body>
+</html>

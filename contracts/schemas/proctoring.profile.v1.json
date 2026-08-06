@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intelliquiz.local/schemas/proctoring.profile.v1.json",
+  "title": "ProctoringProfileV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "name", "strictness", "risk_thresholds"],
+  "properties": {
+    "schema": { "const": "proctoring.profile.v1" },
+    "id": { "type": "string", "format": "uuid" },
+    "name": { "type": "string" },
+    "strictness": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "lockdown"]
+    },
+    "risk_thresholds": {
+      "type": "object",
+      "required": ["warn", "flag", "terminate"],
+      "properties": {
+        "warn": { "type": "number", "minimum": 0, "maximum": 1 },
+        "flag": { "type": "number", "minimum": 0, "maximum": 1 },
+        "terminate": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "require_android_camera": { "type": "boolean", "default": true },
+    "blacklist_apps": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": ["chrome", "discord", "teamviewer", "anydesk"]
+    }
+  }
+}

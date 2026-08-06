@@ -1,0 +1,41 @@
+dataset: Deep-Features-Mediapipe
+cache_dir: data/cache
+artifacts_dir: artifacts
+test_size: 0.2
+random_state: 42
+cv_folds: 5
+
+models:
+  - random_forest
+  - gradient_boosting
+  - logistic_regression
+  - svm_rbf
+  - mlp
+
+random_forest:
+  n_estimators: 200
+  max_depth: null
+  class_weight: balanced
+  n_jobs: -1
+
+gradient_boosting:
+  n_estimators: 150
+  learning_rate: 0.1
+  max_depth: 3
+
+logistic_regression:
+  max_iter: 2000
+  class_weight: balanced
+  C: 1.0
+
+svm_rbf:
+  C: 10.0
+  gamma: scale
+  class_weight: balanced
+
+mlp:
+  hidden_layer_sizes: [128, 64]
+  activation: relu
+  max_iter: 300
+  early_stopping: true
+  random_state: 42

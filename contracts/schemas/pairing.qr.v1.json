@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intelliquiz.local/schemas/pairing.qr.v1.json",
+  "title": "PairingQrV1",
+  "description": "Payload encoded in Desktop QR for Android secondary camera handshake",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "session_id", "pairing_token", "desktop_endpoint", "expires_at"],
+  "properties": {
+    "schema": {
+      "const": "pairing.qr.v1"
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "pairing_token": {
+      "type": "string",
+      "minLength": 16
+    },
+    "desktop_endpoint": {
+      "type": "string",
+      "description": "ws:// or wss:// local Desktop receiver"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "exam_code": {
+      "type": "string"
+    }
+  }
+}

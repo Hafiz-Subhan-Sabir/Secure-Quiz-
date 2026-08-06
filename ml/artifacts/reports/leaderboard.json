@@ -1,0 +1,532 @@
+{
+  "dataset": "Deep-Features-Mediapipe",
+  "n_samples": 649,
+  "n_features": 1404,
+  "best_model": "random_forest",
+  "best_macro_f1": 0.9690368111420742,
+  "target_accuracy": 0.9,
+  "meets_target": true,
+  "leaderboard": [
+    {
+      "model": "random_forest",
+      "accuracy": 0.9692307692307692,
+      "macro_f1": 0.9690368111420742,
+      "weighted_f1": 0.9690368111420744,
+      "cv_accuracy_mean": 0.9730022404779686,
+      "cv_accuracy_std": 0.016595613685756166,
+      "mean_predicted_risk": 0.41269230769230775,
+      "model_path": "artifacts\\models\\random_forest_20260804T070032Z.joblib",
+      "confusion_matrix": "artifacts\\reports\\cm_random_forest_20260804T070032Z.png",
+      "per_class": {
+        "SBR": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "SBL": {
+          "precision": 1.0,
+          "recall": 0.9,
+          "f1": 0.9473684210526315,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "MO": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.55
+        },
+        "LP": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.35
+        },
+        "DB": {
+          "precision": 1.0,
+          "recall": 0.9,
+          "f1": 0.9473684210526315,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "S": {
+          "precision": 1.0,
+          "recall": 0.8,
+          "f1": 0.8888888888888888,
+          "support": 10,
+          "proctoring_risk_weight": 0.1
+        },
+        "N": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.7
+        },
+        "RE": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.25
+        },
+        "F": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "f1": 0.9090909090909091,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "SH": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.85
+        },
+        "B&S": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.3
+        },
+        "RE&MO": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.6
+        },
+        "W&HT": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.9
+        }
+      }
+    },
+    {
+      "model": "mlp",
+      "accuracy": 0.9615384615384616,
+      "macro_f1": 0.9610115031167663,
+      "weighted_f1": 0.9610115031167663,
+      "cv_accuracy_mean": 0.9075056011949216,
+      "cv_accuracy_std": 0.014445630232242818,
+      "mean_predicted_risk": 0.41423076923076924,
+      "model_path": "artifacts\\models\\mlp_20260804T070622Z.joblib",
+      "confusion_matrix": "artifacts\\reports\\cm_mlp_20260804T070622Z.png",
+      "per_class": {
+        "SBR": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "SBL": {
+          "precision": 0.9,
+          "recall": 0.9,
+          "f1": 0.9,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "MO": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.55
+        },
+        "LP": {
+          "precision": 1.0,
+          "recall": 0.9,
+          "f1": 0.9473684210526315,
+          "support": 10,
+          "proctoring_risk_weight": 0.35
+        },
+        "DB": {
+          "precision": 1.0,
+          "recall": 0.9,
+          "f1": 0.9473684210526315,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "S": {
+          "precision": 1.0,
+          "recall": 0.8,
+          "f1": 0.8888888888888888,
+          "support": 10,
+          "proctoring_risk_weight": 0.1
+        },
+        "N": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.7
+        },
+        "RE": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.25
+        },
+        "F": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "SH": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.85
+        },
+        "B&S": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.3
+        },
+        "RE&MO": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.6
+        },
+        "W&HT": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.9
+        }
+      }
+    },
+    {
+      "model": "gradient_boosting",
+      "accuracy": 0.9538461538461539,
+      "macro_f1": 0.9535493746020062,
+      "weighted_f1": 0.9535493746020062,
+      "cv_accuracy_mean": 0.9595220313666915,
+      "cv_accuracy_std": 0.023895557962959297,
+      "mean_predicted_risk": 0.41615384615384615,
+      "model_path": "artifacts\\models\\gradient_boosting_20260804T070604Z.joblib",
+      "confusion_matrix": "artifacts\\reports\\cm_gradient_boosting_20260804T070604Z.png",
+      "per_class": {
+        "SBR": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "SBL": {
+          "precision": 1.0,
+          "recall": 0.9,
+          "f1": 0.9473684210526315,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "MO": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.55
+        },
+        "LP": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.35
+        },
+        "DB": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "f1": 0.9090909090909091,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "S": {
+          "precision": 1.0,
+          "recall": 0.8,
+          "f1": 0.8888888888888888,
+          "support": 10,
+          "proctoring_risk_weight": 0.1
+        },
+        "N": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.7
+        },
+        "RE": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.25
+        },
+        "F": {
+          "precision": 1.0,
+          "recall": 0.8,
+          "f1": 0.8888888888888888,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "SH": {
+          "precision": 0.8181818181818182,
+          "recall": 0.9,
+          "f1": 0.8571428571428571,
+          "support": 10,
+          "proctoring_risk_weight": 0.85
+        },
+        "B&S": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.3
+        },
+        "RE&MO": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.6
+        },
+        "W&HT": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.9
+        }
+      }
+    },
+    {
+      "model": "logistic_regression",
+      "accuracy": 0.9538461538461539,
+      "macro_f1": 0.952537005478182,
+      "weighted_f1": 0.9525370054781819,
+      "cv_accuracy_mean": 0.9691934279312922,
+      "cv_accuracy_std": 0.011175128642005545,
+      "mean_predicted_risk": 0.42192307692307696,
+      "model_path": "artifacts\\models\\logistic_regression_20260804T070614Z.joblib",
+      "confusion_matrix": "artifacts\\reports\\cm_logistic_regression_20260804T070614Z.png",
+      "per_class": {
+        "SBR": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "SBL": {
+          "precision": 0.9,
+          "recall": 0.9,
+          "f1": 0.9,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "MO": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.55
+        },
+        "LP": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "f1": 0.9090909090909091,
+          "support": 10,
+          "proctoring_risk_weight": 0.35
+        },
+        "DB": {
+          "precision": 1.0,
+          "recall": 0.7,
+          "f1": 0.8235294117647058,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "S": {
+          "precision": 1.0,
+          "recall": 0.8,
+          "f1": 0.8888888888888888,
+          "support": 10,
+          "proctoring_risk_weight": 0.1
+        },
+        "N": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "f1": 0.9090909090909091,
+          "support": 10,
+          "proctoring_risk_weight": 0.7
+        },
+        "RE": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.25
+        },
+        "F": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "SH": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.85
+        },
+        "B&S": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.3
+        },
+        "RE&MO": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.6
+        },
+        "W&HT": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.9
+        }
+      }
+    },
+    {
+      "model": "svm_rbf",
+      "accuracy": 0.9461538461538461,
+      "macro_f1": 0.9448061398525796,
+      "weighted_f1": 0.9448061398525793,
+      "cv_accuracy_mean": 0.9595593726661686,
+      "cv_accuracy_std": 0.01408630923706462,
+      "mean_predicted_risk": 0.41923076923076924,
+      "model_path": "artifacts\\models\\svm_rbf_20260804T070615Z.joblib",
+      "confusion_matrix": "artifacts\\reports\\cm_svm_rbf_20260804T070615Z.png",
+      "per_class": {
+        "SBR": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "SBL": {
+          "precision": 1.0,
+          "recall": 0.7,
+          "f1": 0.8235294117647058,
+          "support": 10,
+          "proctoring_risk_weight": 0.15
+        },
+        "MO": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "f1": 0.9090909090909091,
+          "support": 10,
+          "proctoring_risk_weight": 0.55
+        },
+        "LP": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.35
+        },
+        "DB": {
+          "precision": 1.0,
+          "recall": 0.9,
+          "f1": 0.9473684210526315,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "S": {
+          "precision": 1.0,
+          "recall": 0.8,
+          "f1": 0.8888888888888888,
+          "support": 10,
+          "proctoring_risk_weight": 0.1
+        },
+        "N": {
+          "precision": 0.8333333333333334,
+          "recall": 1.0,
+          "f1": 0.9090909090909091,
+          "support": 10,
+          "proctoring_risk_weight": 0.7
+        },
+        "RE": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.25
+        },
+        "F": {
+          "precision": 0.9090909090909091,
+          "recall": 1.0,
+          "f1": 0.9523809523809523,
+          "support": 10,
+          "proctoring_risk_weight": 0.2
+        },
+        "SH": {
+          "precision": 1.0,
+          "recall": 0.9,
+          "f1": 0.9473684210526315,
+          "support": 10,
+          "proctoring_risk_weight": 0.85
+        },
+        "B&S": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.3
+        },
+        "RE&MO": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.6
+        },
+        "W&HT": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 10,
+          "proctoring_risk_weight": 0.9
+        }
+      }
+    }
+  ],
+  "trained_at_utc": "2026-08-04T07:06:23.144224+00:00"
+}
