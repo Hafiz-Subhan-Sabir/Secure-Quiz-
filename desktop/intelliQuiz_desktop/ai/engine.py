@@ -114,7 +114,9 @@ class OnDeviceAIEngine:
 
         lms = face_landmarks_list[0]
         yaw, pitch = estimate_yaw_pitch(lms)
-        looking_away = abs(yaw) > 0.35 or abs(pitch) > 1.8
+        # Tuned for "not sitting straight at the screen":
+        # yaw ~0.22 ≈ noticeable left/right turn; pitch ratio catches up/down look.
+        looking_away = abs(yaw) > 0.22 or abs(pitch) > 1.15
 
         pred: GesturePrediction | None = None
         features_ok = False
@@ -130,14 +132,23 @@ class OnDeviceAIEngine:
             gaze = GesturePrediction(
                 label=-3,
                 name="GAZE_AWAY",
-                risk=0.8,
+                risk=0.82,
                 latency_ms=pred.latency_ms if pred else 0.0,
-                plain_language="Head turned away from the screen (gaze diversion).",
+                plain_language="Head/eyes turned away from the screen instead of sitting straight.",
                 source="heuristic",
             )
-            # Prefer higher of classifier vs gaze heuristic
             if pred is None or gaze.risk >= pred.risk:
                 pred = gaze
+        elif pred is not None and pred.risk < 0.4:
+            # Sitting relatively straight with a low-risk gesture — treat as attentive
+            pred = GesturePrediction(
+                label=pred.label,
+                name=pred.name,
+                risk=pred.risk,
+                latency_ms=pred.latency_ms,
+                plain_language=pred.plain_language or "Face visible and oriented toward the screen.",
+                source=pred.source,
+            )
 
         return FrameAnalysis(
             face_count=face_count,

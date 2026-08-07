@@ -59,23 +59,42 @@ class FaceMonitor:
         self._landmarker: FaceLandmarkerBundle | None = None
         self._session_id: str = ""
         self._last_capture_at = 0.0
+        self._last_soft_log_at = 0.0
         self._ema_risk = 0.0
+        self._prev_yaw: float | None = None
 
     def start(self, session_id: str) -> None:
         self._session_id = session_id
+        # Allow restart after a previous exam stop()
         if self._thread and self._thread.is_alive():
             return
+        self._thread = None
         self._stop.clear()
+        self._last_capture_at = 0.0
+        self._last_soft_log_at = 0.0
+        self._ema_risk = 0.0
+        self._prev_yaw = None
         with self._lock:
             self.snapshot.running = True
+            self.snapshot.camera_ok = False
+            self.snapshot.face_count = 0
+            self.snapshot.last_gesture = ""
+            self.snapshot.last_risk = 0.0
+            self.snapshot.session_risk = 0.0
+            self.snapshot.looking_away = False
             self.snapshot.message = "Starting webcam…"
+            self.snapshot.evidence_count = 0
+            self.snapshot.last_evidence = []
+            self._latest_jpeg = None
+            self._latest_bgr = None
         self._thread = threading.Thread(target=self._loop, name="face-monitor", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=3)
+            self._thread = None
         if self._landmarker:
             try:
                 self._landmarker.close()
@@ -84,12 +103,15 @@ class FaceMonitor:
             self._landmarker = None
         with self._lock:
             self.snapshot.running = False
+            self.snapshot.camera_ok = False
             self.snapshot.message = "Stopped"
+            self._latest_jpeg = None
+            self._latest_bgr = None
 
-    def status(self) -> dict[str, Any]:
+    def status(self, *, include_evidence: bool = True) -> dict[str, Any]:
         with self._lock:
             s = self.snapshot
-            return {
+            out = {
                 "running": s.running,
                 "camera_ok": s.camera_ok,
                 "ai_ready": s.ai_ready,
@@ -101,8 +123,12 @@ class FaceMonitor:
                 "yaw": round(s.yaw, 3),
                 "message": s.message,
                 "evidence_count": s.evidence_count,
-                "last_evidence": list(s.last_evidence[:6]),
             }
+            if include_evidence:
+                out["last_evidence"] = list(s.last_evidence[:6])
+            else:
+                out["last_evidence"] = []
+            return out
 
     def latest_jpeg(self) -> bytes | None:
         with self._lock:
@@ -149,6 +175,11 @@ class FaceMonitor:
             plain_language=plain_language or f"Manual evidence capture: {reason}",
         )
         self._record_evidence(payload, severity=severity, event_type=event_type)
+        with self._lock:
+            self.snapshot.last_risk = max(self.snapshot.last_risk, severity)
+            self.snapshot.session_risk = max(self.snapshot.session_risk, severity)
+            self.snapshot.last_gesture = gesture_label
+            self.snapshot.message = plain_language or self.snapshot.message
         return payload
 
     def _loop(self) -> None:
@@ -162,10 +193,18 @@ class FaceMonitor:
                 self.snapshot.camera_ok = False
             return
 
-        cap = cv2.VideoCapture(self.settings.camera_index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(self.settings.camera_index, cv2.CAP_MSMF)
-        if not cap.isOpened():
+        cap = None
+        # Prefer MSMF on Windows — CAP_DSHOW can hang forever on some drivers
+        for backend in (getattr(cv2, "CAP_MSMF", 700), getattr(cv2, "CAP_DSHOW", 700), 0):
+            try:
+                trial = cv2.VideoCapture(self.settings.camera_index, backend)
+                if trial.isOpened():
+                    cap = trial
+                    break
+                trial.release()
+            except Exception:
+                continue
+        if cap is None or not cap.isOpened():
             cap = cv2.VideoCapture(self.settings.camera_index)
         if not cap.isOpened():
             with self._lock:
@@ -174,8 +213,12 @@ class FaceMonitor:
             return
 
         # Prefer a modest resolution for stable FPS on student laptops
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        try:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
 
         with self._lock:
             self.snapshot.camera_ok = True
@@ -232,7 +275,24 @@ class FaceMonitor:
     def _handle_analysis(self, frame: np.ndarray, analysis: FrameAnalysis) -> None:
         pred = analysis.prediction
         risk = float(pred.risk) if pred else 0.0
-        # EMA smooths flicker; still reacts to spikes
+
+        # Sudden head movement (not sitting still facing the screen)
+        if self._prev_yaw is not None and abs(analysis.yaw - self._prev_yaw) > 0.18:
+            if pred is None or risk < 0.75:
+                from intelliQuiz_desktop.ai.engine import GesturePrediction
+
+                pred = GesturePrediction(
+                    label=-4,
+                    name="HEAD_MOVE",
+                    risk=0.78,
+                    latency_ms=pred.latency_ms if pred else 0.0,
+                    plain_language="Sudden head movement — not sitting still facing the screen.",
+                    source="heuristic",
+                )
+                risk = pred.risk
+                analysis.looking_away = True
+        self._prev_yaw = analysis.yaw
+
         self._ema_risk = (0.65 * self._ema_risk) + (0.35 * risk)
 
         with self._lock:
@@ -249,17 +309,16 @@ class FaceMonitor:
         if pred is None:
             return
 
-        # Map event types
         if pred.name == "NO_FACE":
             event_type = "no_face"
         elif pred.name == "MULTI_FACE":
             event_type = "multi_face"
-        elif pred.name == "GAZE_AWAY":
+        elif pred.name in ("GAZE_AWAY", "HEAD_MOVE"):
             event_type = "gaze_away"
         else:
             event_type = "gesture_risk"
 
-        should_capture = risk >= self.settings.gesture_capture_threshold
+        should_capture = risk >= self.settings.gesture_capture_threshold or analysis.looking_away
         now = time.time()
         cooled = (now - self._last_capture_at) >= self.settings.capture_cooldown_sec
 
@@ -281,9 +340,22 @@ class FaceMonitor:
             payload["pitch"] = analysis.pitch
             payload["source_detector"] = pred.source
             self._record_evidence(payload, severity=risk, event_type=event_type)
-        elif self.on_event and risk >= 0.4:
-            # Soft log without image for mid risk (rate-limited by cooldown only for captures)
-            pass
+        elif self.on_event and risk >= 0.4 and (now - self._last_soft_log_at) >= 20.0:
+            # Soft integrity log without heavy images (still visible in admin timeline)
+            self._last_soft_log_at = now
+            self.on_event(
+                event_type,
+                risk,
+                {
+                    "gesture_label": pred.name,
+                    "plain_language": pred.plain_language,
+                    "source": "primary_webcam",
+                    "source_detector": pred.source,
+                    "yaw": analysis.yaw,
+                    "pitch": analysis.pitch,
+                    "soft_log": True,
+                },
+            )
 
     def _record_evidence(self, payload: dict[str, Any], *, severity: float, event_type: str) -> None:
         thumb = {

@@ -86,8 +86,14 @@ def get_session_report(
         ).all()
     )
 
-    severities = [e.severity for e in events]
-    flags = sorted({e.type for e in events if e.severity >= 0.65})
+    severities = [e.severity for e in events if e.type not in ("heartbeat", "submit")]
+    flags = sorted(
+        {
+            e.type
+            for e in events
+            if e.severity >= 0.65 and e.type not in ("heartbeat", "submit")
+        }
+    )
 
     timeline: list[dict] = []
     evidence: list[EvidenceFrame] = []
@@ -95,6 +101,12 @@ def get_session_report(
     for e in events:
         payload = json.loads(e.payload_json or "{}")
         plain = str(payload.get("plain_language") or PLAIN.get(e.type, e.type))
+        # Strip bulky images from timeline JSON so the admin UI stays fast
+        timeline_payload = {
+            k: v
+            for k, v in payload.items()
+            if k not in ("image_data_uri", "screen_image_data_uri")
+        }
         timeline.append(
             {
                 "event_id": e.event_id,
@@ -102,9 +114,14 @@ def get_session_report(
                 "ts": e.ts.isoformat(),
                 "severity": e.severity,
                 "plain_language": plain,
-                "payload": payload,
+                "gesture_label": payload.get("gesture_label"),
+                "student_name": payload.get("student_name"),
+                "payload": timeline_payload,
             }
         )
+        # Real evidence photos only (skip heartbeat noise)
+        if e.type == "heartbeat":
+            continue
         image = payload.get("image_data_uri")
         if image:
             evidence.append(
@@ -132,6 +149,8 @@ def get_session_report(
                 )
             )
 
+    # Meaningful event count excludes routine heartbeats
+    meaningful = [e for e in events if e.type != "heartbeat"]
     prob = _compute_cheating_probability(severities, session.last_risk_score)
     return IntegrityReport(
         session_id=session_id,
@@ -141,8 +160,11 @@ def get_session_report(
         status=session.status,
         cheating_probability=prob,
         flags=flags,
-        event_count=len(events),
-        timeline=timeline,
+        event_count=len(meaningful),
+        timeline=[t for t in timeline if t["type"] != "heartbeat"],
         evidence=evidence,
         summary_plain=_summary_plain(prob, flags, len(evidence)),
+        quiz_score=int(getattr(session, "quiz_score", 0) or 0),
+        quiz_max_score=int(getattr(session, "quiz_max_score", 0) or 0),
+        quiz_percent=float(getattr(session, "quiz_percent", 0.0) or 0.0),
     )

@@ -85,6 +85,9 @@ class ExamSession(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_risk_score: Mapped[float] = mapped_column(Float, default=0.0)
     android_paired: Mapped[bool] = mapped_column(default=False)
+    quiz_score: Mapped[int] = mapped_column(Integer, default=0)
+    quiz_max_score: Mapped[int] = mapped_column(Integer, default=0)
+    quiz_percent: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class IntegrityEvent(Base):

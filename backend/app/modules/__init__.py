@@ -22,6 +22,8 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     role: Literal["admin", "instructor", "student"]
     expires_in: int
+    full_name: str = ""
+    email: str = ""
 
 
 class ExamCreate(BaseModel):

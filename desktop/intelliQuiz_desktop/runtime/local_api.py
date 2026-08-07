@@ -107,14 +107,53 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
 
     @app.post("/api/answer")
     def answer(body: AnswerBody) -> dict[str, Any]:
-        return ctrl.save_answer(body.question_id, body.choice_index)
-
-    @app.post("/api/submit")
-    def submit() -> dict[str, Any]:
         try:
-            return ctrl.submit()
+            return ctrl.save_answer(body.question_id, body.choice_index)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/submit")
+    def submit(force: bool = False) -> dict[str, Any]:
+        try:
+            return ctrl.submit(force=force)
+        except Exception as exc:
+            # Auto-retry once as forced submit when camera pause blocks the student
+            detail = str(exc)
+            if "paused" in detail.lower() or "camera" in detail.lower():
+                try:
+                    return ctrl.submit(force=True)
+                except Exception as exc2:
+                    raise HTTPException(status_code=400, detail=str(exc2)) from exc2
+            raise HTTPException(status_code=400, detail=detail) from exc
+
+    @app.get("/api/result")
+    def last_result() -> dict[str, Any]:
+        try:
+            return ctrl.get_last_result()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/my-results")
+    def my_results() -> list[dict[str, Any]]:
+        try:
+            return ctrl.list_my_results()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/another-exam")
+    def another_exam(clear_local: bool = True) -> dict[str, Any]:
+        try:
+            return ctrl.prepare_another_exam(clear_local=clear_local)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/logout")
+    def logout(clear_local: bool = True) -> dict[str, Any]:
+        return ctrl.logout(clear_local=clear_local)
+
+    @app.get("/api/storage")
+    def storage() -> dict[str, Any]:
+        return ctrl.storage_info()
 
     @app.post("/api/simulate-abnormal")
     def simulate() -> dict[str, Any]:

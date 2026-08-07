@@ -65,6 +65,8 @@ class PairingHub:
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._server: Any = None
+        self._last_phone_evidence_at = 0.0
+        self._phone_frame_count = 0
 
     def begin_session(self, *, session_id: str, pairing_token: str, exam_code: str | None = None) -> dict[str, Any]:
         lan = discover_lan_ip()
@@ -102,7 +104,8 @@ class PairingHub:
                 last_alive_at=0.0,
                 camera_live=False,
             )
-        self._ensure_server()
+        # Phone pairing uses FastAPI WSS on the HTTPS phone port (8767), not this legacy WS.
+        # Keep PairingHub as state + message handler only.
         return self.status()
 
     def mark_paired_local(self) -> None:
@@ -134,23 +137,37 @@ class PairingHub:
 
     def status(self) -> dict[str, Any]:
         now = time.time()
+        unpaired_cb = False
         with self._lock:
             s = self.state
-            # Expire stale phone camera during live pairing
-            if s.paired and s.last_alive_at and (now - s.last_alive_at) > self.ALIVE_TIMEOUT_SEC:
-                # Soft-expire live flag; keep paired until disconnect message unless timed out hard
-                if (now - s.last_alive_at) > self.ALIVE_TIMEOUT_SEC * 2:
+            lab = s.last_android_message.startswith("Marked paired")
+            # Soft-expire live flag; hard-expire pairing after 2x alive window
+            if s.paired and s.last_alive_at and not lab:
+                age = now - s.last_alive_at
+                if age > self.ALIVE_TIMEOUT_SEC:
+                    s.camera_live = False
+                if age > self.ALIVE_TIMEOUT_SEC * 2.5:
                     s.paired = False
                     s.camera_live = False
                     s.last_android_message = "Phone camera timed out — reopen the page"
-            live = bool(s.camera_live and s.last_alive_at and (now - s.last_alive_at) <= self.ALIVE_TIMEOUT_SEC)
-            # Lab-marked paired without frames stays "live"
-            if s.paired and s.last_android_message.startswith("Marked paired"):
-                live = True
-            return {
+                    unpaired_cb = True
+            live = bool(
+                lab
+                or (
+                    s.camera_live
+                    and s.last_alive_at
+                    and (now - s.last_alive_at) <= self.ALIVE_TIMEOUT_SEC
+                )
+            )
+            # Recently paired with frames still counts as paired during grace window
+            recently_alive = bool(
+                s.last_alive_at and (now - s.last_alive_at) <= self.ALIVE_TIMEOUT_SEC * 2.5
+            )
+            paired = bool(s.paired and (live or lab or recently_alive))
+            snapshot = {
                 "active": s.active,
-                "paired": s.paired and (live or s.last_android_message.startswith("Marked paired")),
-                "camera_live": live or s.last_android_message.startswith("Marked paired"),
+                "paired": paired,
+                "camera_live": live or lab,
                 "session_id": s.session_id,
                 "desktop_endpoint": s.desktop_endpoint,
                 "mobile_camera_url": s.mobile_camera_url,
@@ -160,6 +177,12 @@ class PairingHub:
                 "last_android_message": s.last_android_message,
                 "android_frames": s.android_frames,
             }
+        if unpaired_cb and self.on_unpaired:
+            try:
+                self.on_unpaired()
+            except Exception:
+                pass
+        return snapshot
 
     def stop(self) -> None:
         if self._loop and self._server:
@@ -205,17 +228,18 @@ class PairingHub:
             pass
 
     def client_disconnected(self) -> None:
-        """Call when the phone WebSocket drops."""
+        """Phone WebSocket dropped — do not instantly unpair.
+
+        Mobile browsers / networks flap briefly. Keep `paired` until the alive
+        timeout expires so confirm-camera / exam start still succeed, and so a
+        quick reconnect does not wipe the handshake.
+        """
         with self._lock:
-            was = self.state.paired or self.state.camera_live
             self.state.camera_live = False
-            self.state.paired = False
-            self.state.last_android_message = "Phone disconnected — reopen camera page"
-        if was and self.on_unpaired:
-            try:
-                self.on_unpaired()
-            except Exception:
-                pass
+            self.state.last_android_message = (
+                "Phone socket closed — reopen camera page if pairing expires"
+            )
+            # Keep paired flag; status() will soft-expire via ALIVE_TIMEOUT.
 
     async def _send(self, websocket: Any, payload: dict[str, Any]) -> None:
         text = json.dumps(payload)
@@ -232,6 +256,29 @@ class PairingHub:
                     self.state.last_alive_at = time.time()
                     self.state.camera_live = True
                     self.state.last_android_message = "Phone camera frame received"
+                    self._phone_frame_count += 1
+                    frame_n = self._phone_frame_count
+                # Persist phone JPEGs as admin evidence on a cooldown (not every frame)
+                now = time.time()
+                if self.on_android_event and (now - self._last_phone_evidence_at) >= 12.0:
+                    self._last_phone_evidence_at = now
+                    b64 = base64.b64encode(raw).decode("ascii")
+                    self.on_android_event(
+                        "android_env_anomaly",
+                        0.45 if frame_n <= 2 else 0.6,
+                        {
+                            "source": "android_camera",
+                            "plain_language": (
+                                "Phone camera paired — room view photo saved for admin."
+                                if frame_n <= 2
+                                else "Phone room camera captured a frame during the exam."
+                            ),
+                            "gesture_label": "PHONE" if frame_n <= 2 else "ENV",
+                            "image_data_uri": f"data:image/jpeg;base64,{b64}",
+                            "capture_reason": "android_frame",
+                            "android_frame_index": frame_n,
+                        },
+                    )
                 return
 
             data = json.loads(raw)

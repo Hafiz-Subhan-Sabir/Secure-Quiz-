@@ -362,10 +362,72 @@
         line-height: 1.25;
       }
       .done-pane {
-        max-width: 480px;
-        margin: 10vh auto 0;
+        max-width: 520px;
+        margin: 6vh auto 0;
         text-align: center;
         animation: rise 480ms var(--ease) both;
+      }
+      .result-card {
+        text-align: left;
+        margin: 1.25rem 0 0;
+        padding: 1rem 1.05rem;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(11, 107, 88, 0.06);
+      }
+      .result-card h2 {
+        margin: 0 0 0.65rem;
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+      .result-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem 0.85rem;
+        margin: 0;
+      }
+      .result-grid dt {
+        font-size: 0.72rem;
+        color: var(--muted);
+        margin: 0;
+      }
+      .result-grid dd {
+        margin: 0.1rem 0 0;
+        font-size: 1.05rem;
+        font-weight: 700;
+      }
+      .storage-note {
+        margin-top: 0.85rem;
+        font-size: 0.78rem;
+        color: var(--muted);
+        line-height: 1.45;
+        text-align: left;
+      }
+      .history-list {
+        margin: 0.75rem 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 0.45rem;
+        text-align: left;
+      }
+      .history-list li {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.55rem 0.7rem;
+        font-size: 0.82rem;
+        background: #fff;
+      }
+      .history-list strong { display: block; margin-bottom: 0.15rem; }
+      .done-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        justify-content: center;
+        margin-top: 1.25rem;
+      }
+      .done-actions .primary, .done-actions .ghost {
+        min-width: 9.5rem;
       }
       .check-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.45rem; }
       .check-list li { display: flex; justify-content: space-between; gap: 0.6rem; font-size: 0.88rem; }
@@ -552,8 +614,45 @@
             <p class="now-doing">All done</p>
             <h1>Exam submitted</h1>
             <p class="lead" id="doneMsg" style="margin-left:auto;margin-right:auto">
-              Your answers and any evidence photos were sent for admin review. You can close this window.
+              Your answers were graded and sent for admin review.
             </p>
+            <div class="result-card" id="resultCard">
+              <h2>Your results</h2>
+              <dl class="result-grid">
+                <div>
+                  <dt>Quiz score</dt>
+                  <dd id="resScore">—</dd>
+                </div>
+                <div>
+                  <dt>Percent</dt>
+                  <dd id="resPercent">—</dd>
+                </div>
+                <div>
+                  <dt>Integrity risk</dt>
+                  <dd id="resRisk">—</dd>
+                </div>
+                <div>
+                  <dt>Exam</dt>
+                  <dd id="resExam" style="font-size:0.9rem;font-weight:600">—</dd>
+                </div>
+              </dl>
+              <p class="storage-note" id="storageNote">
+                Official scores &amp; evidence are stored on the server. Admins review them under Attempts &amp; flags.
+                Taking another exam clears this PC’s local copy of the finished attempt.
+              </p>
+            </div>
+            <div id="historyWrap" class="hidden">
+              <div class="result-card">
+                <h2>Your previous attempts</h2>
+                <ul class="history-list" id="historyList"></ul>
+              </div>
+            </div>
+            <div class="done-actions">
+              <button class="primary" type="button" id="btnAnotherExam">Take another exam</button>
+              <button class="ghost" type="button" id="btnViewHistory">View all results</button>
+              <button class="ghost" type="button" id="btnSignOut">Sign out</button>
+            </div>
+            <p class="err hidden" id="doneErr"></p>
           </div>
         </section>
       </div>
@@ -632,6 +731,114 @@
         });
         $("footerBar").classList.toggle("hidden", name === "done");
         syncFooter();
+      }
+
+      function fillResultCard(result, riskFallback) {
+        const score = result && result.quiz_score;
+        const max = result && result.quiz_max_score;
+        const pct = result && result.quiz_percent;
+        const risk = (result && result.last_risk_score != null)
+          ? result.last_risk_score
+          : riskFallback;
+        if (score != null && max != null) {
+          $("resScore").textContent = `${score} / ${max}`;
+        } else {
+          $("resScore").textContent = "Pending sync";
+        }
+        $("resPercent").textContent = pct != null ? `${pct}%` : "—";
+        $("resRisk").textContent = risk != null ? `${Math.round(Number(risk) * 100)}%` : "—";
+        $("resExam").textContent = (result && result.exam_title) || $("topMeta").textContent || "—";
+        if (result && result.error) {
+          $("storageNote").textContent =
+            "Score may still be syncing. Official results stay on the server for admin review.";
+        }
+      }
+
+      function resetClientExamState() {
+        questions = [];
+        qIndex = 0;
+        selected = {};
+        seconds = 0;
+        quizPaused = false;
+        autoPhoneSwitched = false;
+        camFailStreak = 0;
+        lastStatus = null;
+        $("historyWrap").classList.add("hidden");
+        $("doneErr").classList.add("hidden");
+        $("pauseOverlay").classList.add("hidden");
+      }
+
+      async function goPickAnotherExam() {
+        $("doneErr").classList.add("hidden");
+        try {
+          await api("/api/another-exam", { method: "POST" });
+          resetClientExamState();
+          loginPhase = "exam";
+          $("loginCreds").classList.add("hidden");
+          $("loginExam").classList.remove("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Pick exam";
+          $("loginTitle").textContent = "Choose your next exam";
+          $("loginLead").textContent =
+            "Previous attempt is saved on the server. Local copy on this PC was cleared. Pick any published exam.";
+          setStep("login");
+          await loadExams();
+          syncFooter();
+        } catch (e) {
+          $("doneErr").textContent = String(e.message || e);
+          $("doneErr").classList.remove("hidden");
+        }
+      }
+
+      async function showHistory() {
+        $("doneErr").classList.add("hidden");
+        try {
+          const rows = await api("/api/my-results");
+          const list = $("historyList");
+          list.innerHTML = "";
+          if (!rows.length) {
+            list.innerHTML = "<li>No attempts found yet.</li>";
+          } else {
+            rows.forEach((r) => {
+              const li = document.createElement("li");
+              const pct = r.quiz_percent != null ? `${r.quiz_percent}%` : "—";
+              const score =
+                r.quiz_score != null && r.quiz_max_score != null
+                  ? `${r.quiz_score}/${r.quiz_max_score}`
+                  : "—";
+              const risk = Math.round(Number(r.last_risk_score || 0) * 100);
+              li.innerHTML =
+                `<strong>${r.exam_title || "Exam"}</strong>` +
+                `${r.status} · score ${score} (${pct}) · risk ${risk}%`;
+              list.appendChild(li);
+            });
+          }
+          $("historyWrap").classList.remove("hidden");
+        } catch (e) {
+          $("doneErr").textContent = String(e.message || e);
+          $("doneErr").classList.remove("hidden");
+        }
+      }
+
+      async function signOut() {
+        $("doneErr").classList.add("hidden");
+        try {
+          await api("/api/logout", { method: "POST" });
+          resetClientExamState();
+          loginPhase = "creds";
+          $("loginCreds").classList.remove("hidden");
+          $("loginExam").classList.add("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Sign in";
+          $("loginTitle").textContent = "Sign in to start";
+          $("loginLead").textContent =
+            "Use your student account. Next you’ll pick an exam and check your camera.";
+          $("email").value = "";
+          $("password").value = "";
+          setStep("login");
+          syncFooter();
+        } catch (e) {
+          $("doneErr").textContent = String(e.message || e);
+          $("doneErr").classList.remove("hidden");
+        }
       }
 
       function setSetupMode(mode) {
@@ -1028,6 +1235,9 @@
 
       async function doStartExam() {
         $("loginErr").classList.add("hidden");
+        const primary = $("btnFooterPrimary");
+        primary.disabled = true;
+        primary.textContent = "Opening camera check…";
         try {
           const examId = $("examSelect").value;
           if (!examId) throw new Error("Select an exam first");
@@ -1047,6 +1257,7 @@
         } catch (e) {
           $("loginErr").textContent = String(e.message || e);
           $("loginErr").classList.remove("hidden");
+          syncFooter();
         }
       }
 
@@ -1066,8 +1277,12 @@
           const last = qIndex >= questions.length - 1;
           if (last) {
             const res = await api("/api/submit", { method: "POST" });
-            $("doneMsg").textContent =
-              `All set. Risk score ${Math.round((res.risk || 0) * 100)}%. Admins can review any evidence photos under Attempts & flags. You can close this window.`;
+            const riskPct = Math.round((res.risk || 0) * 100);
+            fillResultCard(res.result || null, res.risk);
+            $("doneMsg").textContent = res.forced
+              ? `Submitted while camera was unavailable (logged for admin). Risk ${riskPct}%.`
+              : `All set. Your score is below. Admins can also review evidence under Attempts & flags.`;
+            $("historyWrap").classList.add("hidden");
             setStep("done");
           } else {
             qIndex += 1;
@@ -1132,6 +1347,10 @@
         $("liveAlert").classList.remove("hidden");
         await pollStatus();
       };
+
+      $("btnAnotherExam").onclick = () => goPickAnotherExam();
+      $("btnViewHistory").onclick = () => showHistory();
+      $("btnSignOut").onclick = () => signOut();
 
       setInterval(() => {
         if (phase !== "exam" || quizPaused) return;

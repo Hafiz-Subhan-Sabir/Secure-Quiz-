@@ -102,6 +102,13 @@ class EncryptedEventStore:
             )
             self._conn.commit()
 
+    def delete_session(self, session_id: str) -> int:
+        """Remove local encrypted events for a finished session (server copy stays)."""
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM events WHERE session_id=?", (session_id,))
+            self._conn.commit()
+            return int(cur.rowcount or 0)
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

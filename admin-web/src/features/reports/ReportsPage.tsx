@@ -102,7 +102,43 @@ export function ReportsPage() {
               <div className="risk-bar" aria-hidden>
                 <span style={{ width: `${Math.min(100, pct)}%` }} />
               </div>
+              {report.quiz_max_score ? (
+                <p className="status" style={{ marginTop: "0.75rem" }}>
+                  Quiz score: <strong>{report.quiz_score}/{report.quiz_max_score}</strong>{" "}
+                  ({Math.round(report.quiz_percent || 0)}%)
+                </p>
+              ) : null}
             </div>
+          </section>
+
+          <section className="panel" style={{ marginTop: "1rem" }}>
+            <h2>Student &amp; attempt</h2>
+            <dl className="attempt-meta">
+              <div>
+                <dt>Student</dt>
+                <dd>{report.student_name || "—"}</dd>
+              </div>
+              <div>
+                <dt>Email</dt>
+                <dd>{report.student_email || "—"}</dd>
+              </div>
+              <div>
+                <dt>Exam</dt>
+                <dd>{report.exam_title || "—"}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd>{report.status}</dd>
+              </div>
+              <div>
+                <dt>Flags</dt>
+                <dd>{report.flags.length ? report.flags.join(", ") : "None"}</dd>
+              </div>
+              <div>
+                <dt>Events</dt>
+                <dd>{report.event_count} notable</dd>
+              </div>
+            </dl>
           </section>
 
           <div className="split-2" style={{ marginTop: "1rem" }}>
@@ -151,7 +187,11 @@ export function ReportsPage() {
                     <span className="status">{formatWhen(String(item.ts))}</span>
                     <div>
                       <strong>{String(item.plain_language ?? item.type)}</strong>
-                      <div className="status">{String(item.type)}</div>
+                      <div className="status">
+                        {String(item.type)}
+                        {item.gesture_label ? ` · ${String(item.gesture_label)}` : ""}
+                        {item.student_name ? ` · ${String(item.student_name)}` : ""}
+                      </div>
                     </div>
                     <strong>{Math.round(Number(item.severity) * 100)}%</strong>
                   </div>

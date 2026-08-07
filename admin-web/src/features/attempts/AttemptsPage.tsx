@@ -89,8 +89,14 @@ export function AttemptsPage() {
                   <dd>{formatWhen(a.started_at)}</dd>
                 </div>
                 <div>
-                  <dt>Status</dt>
-                  <dd>{a.status}</dd>
+                  <dt>Quiz score</dt>
+                  <dd>
+                    {a.quiz_max_score
+                      ? `${a.quiz_score ?? 0}/${a.quiz_max_score} (${Math.round(a.quiz_percent ?? 0)}%)`
+                      : a.status === "submitted"
+                        ? "Pending grade"
+                        : "—"}
+                  </dd>
                 </div>
                 <div>
                   <dt>Phone camera</dt>

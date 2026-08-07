@@ -13,6 +13,7 @@ from app.modules.schemas import (
     OkResponse,
     SessionCreate,
     SessionResponse,
+    StudentAttemptResult,
 )
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -72,6 +73,7 @@ def list_attempts(
                 .select_from(IntegrityEvent)
                 .where(
                     IntegrityEvent.session_id == session.id,
+                    IntegrityEvent.type != "heartbeat",
                     IntegrityEvent.payload_json.like("%image_data_uri%"),
                 )
             )
@@ -90,9 +92,68 @@ def list_attempts(
                 event_count=event_count,
                 evidence_count=evidence_count,
                 flagged=session.last_risk_score >= 0.65 or evidence_count > 0,
+                quiz_score=int(getattr(session, "quiz_score", 0) or 0),
+                quiz_max_score=int(getattr(session, "quiz_max_score", 0) or 0),
+                quiz_percent=float(getattr(session, "quiz_percent", 0.0) or 0.0),
             )
         )
     return out
+
+
+@router.get("/mine", response_model=list[StudentAttemptResult])
+def list_my_attempts(
+    db: Session = Depends(get_db),
+    claims: dict = Depends(require_roles("student", "admin")),
+) -> list[StudentAttemptResult]:
+    """Student's own quiz attempts (scores only — evidence stays admin-side)."""
+    rows = db.execute(
+        select(ExamSession, Exam)
+        .join(Exam, Exam.id == ExamSession.exam_id)
+        .where(ExamSession.student_id == claims["sub"])
+        .order_by(ExamSession.started_at.desc())
+    ).all()
+    return [
+        StudentAttemptResult(
+            session_id=session.id,
+            exam_id=session.exam_id,
+            exam_title=exam.title,
+            status=session.status,
+            started_at=session.started_at,
+            submitted_at=session.submitted_at,
+            quiz_score=int(getattr(session, "quiz_score", 0) or 0),
+            quiz_max_score=int(getattr(session, "quiz_max_score", 0) or 0),
+            quiz_percent=float(getattr(session, "quiz_percent", 0.0) or 0.0),
+            last_risk_score=float(session.last_risk_score or 0.0),
+        )
+        for session, exam in rows
+    ]
+
+
+@router.get("/{session_id}/result", response_model=StudentAttemptResult)
+def get_session_result(
+    session_id: str,
+    db: Session = Depends(get_db),
+    claims: dict = Depends(require_roles("student", "admin")),
+) -> StudentAttemptResult:
+    """Fetch graded score for a session the caller owns (or any session if admin)."""
+    session = db.get(ExamSession, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.student_id != claims["sub"] and claims.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    exam = db.get(Exam, session.exam_id)
+    return StudentAttemptResult(
+        session_id=session.id,
+        exam_id=session.exam_id,
+        exam_title=(exam.title if exam else ""),
+        status=session.status,
+        started_at=session.started_at,
+        submitted_at=session.submitted_at,
+        quiz_score=int(getattr(session, "quiz_score", 0) or 0),
+        quiz_max_score=int(getattr(session, "quiz_max_score", 0) or 0),
+        quiz_percent=float(getattr(session, "quiz_percent", 0.0) or 0.0),
+        last_risk_score=float(session.last_risk_score or 0.0),
+    )
 
 
 @router.post("/{session_id}/heartbeat", response_model=OkResponse)
@@ -108,7 +169,7 @@ def heartbeat(
     if session.student_id != claims["sub"] and claims.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    session.last_risk_score = body.risk_score
+    session.last_risk_score = max(float(session.last_risk_score or 0.0), float(body.risk_score))
     session.android_paired = body.android_paired
     db.commit()
     return OkResponse(ok=True)

@@ -22,6 +22,8 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     role: Literal["admin", "instructor", "student"]
     expires_in: int
+    full_name: str = ""
+    email: str = ""
 
 
 class ExamCreate(BaseModel):
@@ -128,6 +130,9 @@ class IntegrityReport(BaseModel):
     timeline: list[dict[str, Any]] = Field(default_factory=list)
     evidence: list[EvidenceFrame] = Field(default_factory=list)
     summary_plain: str = ""
+    quiz_score: int = 0
+    quiz_max_score: int = 0
+    quiz_percent: float = 0.0
 
 
 class AttemptSummary(BaseModel):
@@ -142,3 +147,21 @@ class AttemptSummary(BaseModel):
     event_count: int
     evidence_count: int
     flagged: bool
+    quiz_score: int = 0
+    quiz_max_score: int = 0
+    quiz_percent: float = 0.0
+
+
+class StudentAttemptResult(BaseModel):
+    """Score + status a student can see after submitting (no evidence photos)."""
+
+    session_id: str
+    exam_id: str
+    exam_title: str = ""
+    status: str
+    started_at: datetime | None = None
+    submitted_at: datetime | None = None
+    quiz_score: int = 0
+    quiz_max_score: int = 0
+    quiz_percent: float = 0.0
+    last_risk_score: float = 0.0

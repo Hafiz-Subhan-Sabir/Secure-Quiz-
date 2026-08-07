@@ -23,4 +23,6 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
         access_token=token,
         role=user.role,  # type: ignore[arg-type]
         expires_in=settings.access_token_expire_minutes * 60,
+        full_name=user.full_name,
+        email=user.email,
     )

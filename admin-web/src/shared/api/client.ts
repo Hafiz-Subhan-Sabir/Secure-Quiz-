@@ -37,6 +37,9 @@ export type IntegrityReport = {
   timeline: Array<Record<string, unknown>>;
   evidence: EvidenceFrame[];
   summary_plain: string;
+  quiz_score?: number;
+  quiz_max_score?: number;
+  quiz_percent?: number;
 };
 
 export type AttemptSummary = {
@@ -51,6 +54,9 @@ export type AttemptSummary = {
   event_count: number;
   evidence_count: number;
   flagged: boolean;
+  quiz_score?: number;
+  quiz_max_score?: number;
+  quiz_percent?: number;
 };
 
 type RequestOpts = RequestInit & { signal?: AbortSignal };

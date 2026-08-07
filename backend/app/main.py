@@ -7,6 +7,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.schema_patches import ensure_schema_patches
 from app.db.session import engine
 from app.modules.auth.router import router as auth_router
 from app.modules.exams.router import router as exams_router
@@ -20,6 +21,7 @@ from app.seed import seed_if_empty
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_schema_patches()
     seed_if_empty()
     yield
 
