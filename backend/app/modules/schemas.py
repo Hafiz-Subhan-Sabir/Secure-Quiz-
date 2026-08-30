@@ -56,6 +56,56 @@ class QuestionOut(BaseModel):
     points: int = 1
 
 
+class QuestionAdminOut(QuestionOut):
+    correct_index: int = 0
+
+
+class QuestionCreate(BaseModel):
+    prompt: str = Field(min_length=1)
+    choices: list[str] = Field(min_length=2, max_length=8)
+    correct_index: int = Field(ge=0)
+    points: int = Field(default=1, ge=1, le=100)
+    order_index: int | None = None
+
+
+class QuestionUpdate(BaseModel):
+    prompt: str | None = None
+    choices: list[str] | None = Field(default=None, min_length=2, max_length=8)
+    correct_index: int | None = Field(default=None, ge=0)
+    points: int | None = Field(default=None, ge=1, le=100)
+    order_index: int | None = None
+
+
+class ExamUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    duration_minutes: int | None = Field(default=None, ge=1, le=600)
+    instructions: str | None = None
+    proctoring_profile_id: str | None = None
+
+
+class ProctoringProfileCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    strictness: Literal["low", "medium", "high", "lockdown"] = "medium"
+    warn_threshold: float = Field(default=0.4, ge=0, le=1)
+    flag_threshold: float = Field(default=0.65, ge=0, le=1)
+    terminate_threshold: float = Field(default=0.9, ge=0, le=1)
+    require_android_camera: bool = True
+    blacklist_apps_csv: str = "chrome,discord,teamviewer,anydesk"
+
+
+class ProctoringProfileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    strictness: str
+    warn_threshold: float
+    flag_threshold: float
+    terminate_threshold: float
+    require_android_camera: bool
+    blacklist_apps_csv: str
+
+
 class ExamPaper(BaseModel):
     exam_id: str
     title: str

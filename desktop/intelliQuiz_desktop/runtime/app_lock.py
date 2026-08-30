@@ -32,7 +32,42 @@ HARD_BLACKLIST = {
     "sunloginclient",
 }
 
-# Browsers / AI helper shells — flagged; killed only in strict kiosk mode.
+# Notes / docs / AI helper apps — treated as hard violations during exams.
+HELPER_BLACKLIST = {
+    "notepad",
+    "wordpad",
+    "winword",
+    "excel",
+    "powerpnt",
+    "onenote",
+    "onenotem",
+    "obs64",
+    "obs32",
+    "obs",
+    "sharex",
+    "lightshot",
+    "snippingtool",
+    "screenclip",
+    "ms-screenclip",
+    "calc",
+    "chatgpt",
+    "claude",
+    "perplexity",
+    "gemini",
+    "copilot",
+    "notion",
+    "evernote",
+    "teams",
+    "ms-teams",
+    "msteams",
+    "cursor",
+    "code",
+    "devenv",
+    "winrar",
+    "7zfm",
+}
+
+# Browsers — flagged; killed when kill_browsers is enabled (exam kiosk window is whitelisted).
 BROWSER_BLACKLIST = {
     "chrome",
     "msedge",
@@ -40,8 +75,6 @@ BROWSER_BLACKLIST = {
     "brave",
     "opera",
     "iexplore",
-    "chatgpt",
-    "copilot",
 }
 
 
@@ -87,6 +120,24 @@ class AppLockController:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._extra_hard: set[str] = set()
+        self._extra_browser: set[str] = set()
+        self._allowed_pids: set[int] = set()
+
+    def set_allowed_pids(self, pids: set[int]) -> None:
+        with self._lock:
+            self._allowed_pids = {p for p in pids if p > 0}
+
+    def apply_profile(self, *, blacklist_csv: str, strictness: str) -> None:
+        """Merge server proctoring blacklist into the scanner."""
+        names = {n.strip().lower().removesuffix(".exe") for n in blacklist_csv.split(",") if n.strip()}
+        browser_names = names & BROWSER_BLACKLIST
+        hard_names = names - browser_names
+        with self._lock:
+            self._extra_hard = hard_names
+            self._extra_browser = browser_names
+            if strictness in {"medium", "high", "lockdown"}:
+                self.kill_browsers = True
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -116,13 +167,20 @@ class AppLockController:
             }
 
     def scan_once(self) -> list[ProcessHit]:
-        return list_prohibited(include_browsers=True)
+        with self._lock:
+            extra_hard = set(self._extra_hard)
+            extra_browser = set(self._extra_browser)
+        return list_prohibited(include_browsers=True, extra_hard=extra_hard, extra_browser=extra_browser)
 
     def enforce_once(self) -> tuple[list[ProcessHit], list[str]]:
         hits = self.scan_once()
         killed: list[str] = []
+        with self._lock:
+            allowed = set(self._allowed_pids)
         if self.kill:
             for hit in hits:
+                if hit.pid in allowed:
+                    continue
                 if hit.category == "browser" and not self.kill_browsers:
                     continue
                 if _terminate(hit.pid):
@@ -145,9 +203,16 @@ class AppLockController:
                 continue
 
 
-def list_prohibited(*, include_browsers: bool = True) -> list[ProcessHit]:
+def list_prohibited(
+    *,
+    include_browsers: bool = True,
+    extra_hard: set[str] | None = None,
+    extra_browser: set[str] | None = None,
+) -> list[ProcessHit]:
+    extra_hard = extra_hard or set()
+    extra_browser = extra_browser or set()
     if sys.platform != "win32":
-        return _list_posix(include_browsers=include_browsers)
+        return _list_posix(include_browsers=include_browsers, extra_hard=extra_hard, extra_browser=extra_browser)
     hits: list[ProcessHit] = []
     try:
         out = subprocess.check_output(
@@ -168,14 +233,21 @@ def list_prohibited(*, include_browsers: bool = True) -> list[ProcessHit]:
             pid = int(parts[1])
         except ValueError:
             continue
-        if exe in HARD_BLACKLIST or exe.replace(" ", "") in HARD_BLACKLIST:
+        if exe in HARD_BLACKLIST or exe.replace(" ", "") in HARD_BLACKLIST or exe in extra_hard or exe in HELPER_BLACKLIST:
             hits.append(ProcessHit(name=exe, pid=pid, category="hard"))
-        elif include_browsers and exe in BROWSER_BLACKLIST:
+        elif include_browsers and (exe in BROWSER_BLACKLIST or exe in extra_browser):
             hits.append(ProcessHit(name=exe, pid=pid, category="browser"))
     return hits
 
 
-def _list_posix(*, include_browsers: bool) -> list[ProcessHit]:
+def _list_posix(
+    *,
+    include_browsers: bool,
+    extra_hard: set[str] | None = None,
+    extra_browser: set[str] | None = None,
+) -> list[ProcessHit]:
+    extra_hard = extra_hard or set()
+    extra_browser = extra_browser or set()
     hits: list[ProcessHit] = []
     try:
         out = subprocess.check_output(["ps", "-A", "-o", "pid=,comm="], text=True)
@@ -193,9 +265,9 @@ def _list_posix(*, include_browsers: bool) -> list[ProcessHit]:
         except ValueError:
             continue
         name = parts[1].lower().split("/")[-1]
-        if name in HARD_BLACKLIST:
+        if name in HARD_BLACKLIST or name in extra_hard or name in HELPER_BLACKLIST:
             hits.append(ProcessHit(name=name, pid=pid, category="hard"))
-        elif include_browsers and name in BROWSER_BLACKLIST:
+        elif include_browsers and (name in BROWSER_BLACKLIST or name in extra_browser):
             hits.append(ProcessHit(name=name, pid=pid, category="browser"))
     return hits
 

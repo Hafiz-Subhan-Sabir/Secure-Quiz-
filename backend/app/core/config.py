@@ -17,7 +17,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://localhost:5173,https://127.0.0.1:5173"
+
+    ssl_enabled: bool = False
+    ssl_certfile: str = ""
+    ssl_keyfile: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

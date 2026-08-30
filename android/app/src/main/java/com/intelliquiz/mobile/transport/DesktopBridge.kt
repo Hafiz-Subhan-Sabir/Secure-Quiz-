@@ -10,16 +10,32 @@ import java.net.URI
  */
 class DesktopBridge(
     endpoint: String,
-    private val onOpen: () -> Unit = {},
-    private val onMessage: (String) -> Unit = {},
-    private val onClose: (code: Int, reason: String) -> Unit = { _, _ -> },
-    private val onError: (Exception) -> Unit = {},
+    onOpen: () -> Unit = {},
+    onMessage: (String) -> Unit = {},
+    onClose: (code: Int, reason: String) -> Unit = { _, _ -> },
+    onError: (Exception) -> Unit = {},
 ) {
+    private val openHandler: () -> Unit = onOpen
+    private val messageHandler: (String) -> Unit = onMessage
+    private val closeHandler: (code: Int, reason: String) -> Unit = onClose
+    private val errorHandler: (Exception) -> Unit = onError
+
     private val client = object : WebSocketClient(URI(endpoint)) {
-        override fun onOpen(handshakedata: ServerHandshake?) = onOpen()
-        override fun onMessage(message: String) = onMessage(message)
-        override fun onClose(code: Int, reason: String, remote: Boolean) = onClose(code, reason)
-        override fun onError(ex: Exception) = onError(ex)
+        override fun onOpen(handshakedata: ServerHandshake?) {
+            openHandler()
+        }
+
+        override fun onMessage(message: String) {
+            messageHandler(message)
+        }
+
+        override fun onClose(code: Int, reason: String, remote: Boolean) {
+            closeHandler(code, reason)
+        }
+
+        override fun onError(ex: Exception) {
+            errorHandler(ex)
+        }
     }
 
     fun connect() = client.connect()

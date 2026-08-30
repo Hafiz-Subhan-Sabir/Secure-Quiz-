@@ -11,6 +11,7 @@ from app.db.schema_patches import ensure_schema_patches
 from app.db.session import engine
 from app.modules.auth.router import router as auth_router
 from app.modules.exams.router import router as exams_router
+from app.modules.proctoring.router import router as proctoring_router
 from app.modules.reports.router import router as reports_router
 from app.modules.schemas import HealthResponse
 from app.modules.sessions.router import router as sessions_router
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router, prefix=api)
     app.include_router(exams_router, prefix=api)
+    app.include_router(proctoring_router, prefix=api)
     app.include_router(sessions_router, prefix=api)
     app.include_router(sync_router, prefix=api)
     app.include_router(reports_router, prefix=api)
@@ -78,12 +80,25 @@ app = create_app()
 def run() -> None:
     import uvicorn
 
+    settings = get_settings()
+    ssl_kwargs: dict = {}
+    if settings.ssl_enabled:
+        from pathlib import Path
+
+        from app.core.certs import ensure_api_tls
+
+        cert_dir = Path(__file__).resolve().parents[1] / "certs"
+        cert_path, key_path = ensure_api_tls(cert_dir)
+        ssl_kwargs["ssl_certfile"] = settings.ssl_certfile or str(cert_path)
+        ssl_kwargs["ssl_keyfile"] = settings.ssl_keyfile or str(key_path)
+
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8080,
         reload=True,
         log_level="info",
+        **ssl_kwargs,
     )
 
 

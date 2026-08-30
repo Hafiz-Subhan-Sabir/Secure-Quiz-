@@ -19,10 +19,15 @@ class ApiClient:
         self.token = token
         self._lock = threading.RLock()
         limits = httpx.Limits(max_keepalive_connections=8, max_connections=16)
+        settings = get_settings()
+        verify: bool | str = False
+        if settings.api_verify_ssl:
+            verify = str(settings.api_ca_cert) if settings.api_ca_cert else True
         self._client = httpx.Client(
             timeout=httpx.Timeout(20.0, connect=5.0),
             limits=limits,
             headers={"Accept": "application/json"},
+            verify=verify,
         )
 
     def _headers(self) -> dict[str, str]:
@@ -50,6 +55,21 @@ class ApiClient:
     def get_exam_paper(self, exam_id: str) -> dict[str, Any]:
         with self._lock:
             r = self._client.get(f"{self.base_url}/exams/{exam_id}/paper", headers=self._headers())
+            r.raise_for_status()
+            return r.json()
+
+    def get_exam(self, exam_id: str) -> dict[str, Any]:
+        with self._lock:
+            r = self._client.get(f"{self.base_url}/exams/{exam_id}", headers=self._headers())
+            r.raise_for_status()
+            return r.json()
+
+    def get_proctoring_profile(self, profile_id: str) -> dict[str, Any]:
+        with self._lock:
+            r = self._client.get(
+                f"{self.base_url}/proctoring-profiles/{profile_id}",
+                headers=self._headers(),
+            )
             r.raise_for_status()
             return r.json()
 

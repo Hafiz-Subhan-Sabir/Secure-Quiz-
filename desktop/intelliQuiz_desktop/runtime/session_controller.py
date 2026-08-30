@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,8 +14,12 @@ from intelliQuiz_desktop.ai.engine import OnDeviceAIEngine
 from intelliQuiz_desktop.core.config import DesktopSettings, get_settings
 from intelliQuiz_desktop.core.device import device_fingerprint
 from intelliQuiz_desktop.runtime.app_lock import AppLockController, ProcessHit
+from intelliQuiz_desktop.runtime.exam_shell import ExamShell
 from intelliQuiz_desktop.runtime.face_monitor import FaceMonitor
+from intelliQuiz_desktop.runtime.focus_guard import FocusGuard
 from intelliQuiz_desktop.runtime.pairing_hub import PairingHub
+from intelliQuiz_desktop.security.identity import merge_samples, verify
+from intelliQuiz_desktop.storage.identity_store import IdentityStore
 from intelliQuiz_desktop.storage.event_store import EncryptedEventStore
 from intelliQuiz_desktop.sync.api_client import ApiClient
 from intelliQuiz_desktop.sync.worker import SyncWorker
@@ -38,6 +44,7 @@ class SessionState:
     identity_source: str = ""  # webcam | phone
     quiz_paused: bool = False
     pause_reason: str = ""
+    require_android_camera: bool = False
     last_result: dict[str, Any] | None = None
 
 
@@ -73,9 +80,64 @@ class SessionController:
             kill_browsers=self.settings.app_lock_kill_browsers,
             on_violation=self._on_app_violation,
         )
+        self.focus_guard = FocusGuard(
+            away_threshold_sec=self.settings.focus_loss_pause_sec,
+            on_away=self._on_focus_away,
+            on_return=self._on_focus_return,
+        )
+        self.exam_shell = ExamShell()
+        self.identity_store = IdentityStore(self.settings.data_dir)
 
         self._hb_stop = threading.Event()
         self._hb_thread: threading.Thread | None = None
+        self._flush_pending_sync()
+
+    def identity_status(self) -> dict[str, Any]:
+        with self._lock:
+            email = self.state.email
+        if not email:
+            return {"enrolled": False, "needs_enrollment": True}
+        enrolled = self.identity_store.is_enrolled(email)
+        return {"enrolled": enrolled, "needs_enrollment": not enrolled, "email": email}
+
+    def enroll_identity(self, *, samples: int = 5) -> dict[str, Any]:
+        with self._lock:
+            email = self.state.email
+        if not email:
+            raise RuntimeError("Sign in before enrolling your face")
+        if self.identity_store.is_enrolled(email):
+            return {"ok": True, "enrolled": True, "message": "Already enrolled"}
+
+        if not self.monitor.snapshot.running:
+            self.monitor.start("identity-enroll")
+
+        captured: list = []
+        deadline = time.time() + 20.0
+        while len(captured) < samples and time.time() < deadline:
+            mon = self.monitor.status()
+            if mon.get("camera_ok") and int(mon.get("face_count") or 0) == 1:
+                sample = self.monitor.identity_sample()
+                if sample is not None:
+                    captured.append(sample)
+            time.sleep(0.45)
+
+        if len(captured) < max(3, samples // 2):
+            raise RuntimeError("Could not capture enough face samples. Center one face in good lighting.")
+
+        embedding = merge_samples(captured)
+        self.identity_store.save(email, embedding)
+        return {"ok": True, "enrolled": True, "samples_used": len(captured)}
+
+    def _verify_identity(self) -> tuple[bool, float]:
+        with self._lock:
+            email = self.state.email
+        enrolled = self.identity_store.load(email) if email else None
+        if enrolled is None:
+            raise RuntimeError("Enroll your face before starting the exam.")
+        sample = self.monitor.identity_sample()
+        if sample is None:
+            raise RuntimeError("Face sample unavailable — look at the webcam and try again.")
+        return verify(enrolled, sample, threshold=self.settings.identity_match_threshold)
 
     # ── auth / exam bootstrap ──────────────────────────────────────────
     def login(self, email: str, password: str) -> dict[str, Any]:
@@ -99,8 +161,29 @@ class SessionController:
         return self.api.list_exams()
 
     def start_exam(self, exam_id: str) -> dict[str, Any]:
+        exam_meta = self.api.get_exam(exam_id)
         paper = self.api.get_exam_paper(exam_id)
         session = self.api.create_session(exam_id, device_fingerprint())
+
+        profile_id = exam_meta.get("proctoring_profile_id")
+        if profile_id:
+            try:
+                profile = self.api.get_proctoring_profile(str(profile_id))
+                self.monitor.apply_proctoring(
+                    warn=float(profile.get("warn_threshold", 0.4)),
+                    flag=float(profile.get("flag_threshold", 0.5)),
+                    terminate=float(profile.get("terminate_threshold", 0.9)),
+                )
+                self.app_lock.apply_profile(
+                    blacklist_csv=str(profile.get("blacklist_apps_csv") or ""),
+                    strictness=str(profile.get("strictness") or "medium"),
+                )
+                require_android = bool(profile.get("require_android_camera", False))
+            except Exception:
+                require_android = False
+        else:
+            require_android = False
+
         with self._lock:
             self.state.exam_id = exam_id
             self.state.exam_title = paper.get("title") or ""
@@ -115,6 +198,7 @@ class SessionController:
             self.state.identity_source = ""
             self.state.quiz_paused = False
             self.state.pause_reason = ""
+            self.state.require_android_camera = require_android
             self.state.error = ""
 
         self.monitor.start(session["id"])
@@ -135,6 +219,7 @@ class SessionController:
             "paper": paper,
             "pairing": pairing,
             "app_lock": self.app_lock.snapshot(),
+            "require_android_camera": require_android,
         }
 
     def advance_to_pairing(self) -> dict[str, Any]:
@@ -182,6 +267,12 @@ class SessionController:
                 "Show exactly one face, centered and well lit, then try again."
             )
 
+        matched, score = self._verify_identity()
+        if not matched:
+            raise RuntimeError(
+                f"Face identity mismatch ({score:.0%} match). Use your enrolled face or re-enroll from the login step."
+            )
+
         with self._lock:
             self.state.face_verified = True
             self.state.identity_source = "webcam"
@@ -190,7 +281,7 @@ class SessionController:
         self._append(
             "heartbeat",
             0.0,
-            {"source": "confirm_camera", "identity_source": "webcam", "face_count": mon.get("face_count")},
+            {"source": "confirm_camera", "identity_source": "webcam", "face_count": mon.get("face_count"), "identity_score": score},
         )
         return {
             "ok": True,
@@ -200,7 +291,9 @@ class SessionController:
             "monitor": mon,
         }
 
-    def enter_exam(self, *, require_pair: bool = False) -> dict[str, Any]:
+    def enter_exam(self, *, require_pair: bool | None = None) -> dict[str, Any]:
+        if require_pair is None:
+            require_pair = self.state.require_android_camera
         status = self.pairing.status()
         paired = bool(status.get("paired") or self.state.android_paired)
 
@@ -224,7 +317,17 @@ class SessionController:
         if require_pair and not paired:
             raise RuntimeError("Phone camera must be paired before starting the quiz")
 
+        allowed = {os.getpid()}
+        if self.settings.exam_kiosk_mode:
+            host = "127.0.0.1" if self.settings.local_ui_host in ("0.0.0.0", "::") else self.settings.local_ui_host
+            url = f"http://{host}:{self.settings.local_ui_port}/"
+            if self.exam_shell.launch(url, kiosk=True):
+                allowed.add(self.exam_shell.pid)
+        self.app_lock.set_allowed_pids(allowed)
+        self.focus_guard.set_allowed_pids(allowed)
+
         self.app_lock.start()
+        self.focus_guard.start()
         hits, killed = self.app_lock.enforce_once()
         if any(h.category == "hard" for h in hits) and not killed:
             pass
@@ -413,6 +516,8 @@ class SessionController:
                 "last_result": dict(st.last_result) if st.last_result else None,
                 "monitor": self.monitor.status(),
                 "app_lock": self.app_lock.snapshot(),
+                "focus_guard": self.focus_guard.snapshot(),
+                "identity": self.identity_status(),
                 "pairing": self.pairing.status(),
                 "ai_ready": self.engine.ready,
                 "storage": self._storage_hint(),
@@ -447,7 +552,9 @@ class SessionController:
 
     def shutdown_runtime(self, *, keep_store: bool = False) -> None:
         self._hb_stop.set()
+        self.focus_guard.stop()
         self.app_lock.stop()
+        self.exam_shell.close()
         self.monitor.stop()
         self.pairing.stop()
         if not keep_store:
@@ -608,9 +715,47 @@ class SessionController:
                 self.state.quiz_paused = False
                 self.state.pause_reason = ""
 
+    def _flush_pending_sync(self) -> None:
+        try:
+            for sid in self.store.pending_session_ids():
+                self.sync.flush(sid)
+        except Exception:
+            pass
+
+    def _on_focus_away(self, process_name: str) -> None:
+        with self._lock:
+            if self.state.phase != "exam":
+                return
+            self.state.quiz_paused = True
+            self.state.pause_reason = (
+                f"Exam paused — another app took focus ({process_name}). Return to the exam window."
+            )
+        self._append(
+            "app_violation",
+            0.65,
+            {
+                "source": "focus_guard",
+                "plain_language": f"Student switched away from exam to {process_name}.",
+                "foreground_process": process_name,
+            },
+        )
+
+    def _on_focus_return(self) -> None:
+        with self._lock:
+            if self.state.phase != "exam":
+                return
+            self.state.quiz_paused = False
+            self.state.pause_reason = ""
+
     def _on_app_violation(self, hits: list[ProcessHit], killed: list[str]) -> None:
         hard = [h for h in hits if h.category == "hard"]
         severity = 0.9 if hard else 0.55
+        with self._lock:
+            if self.state.phase == "exam" and hits:
+                self.state.quiz_paused = True
+                self.state.pause_reason = (
+                    "Exam paused — prohibited app detected. Close helper apps and return to the exam."
+                )
         self._append(
             "app_violation",
             severity,

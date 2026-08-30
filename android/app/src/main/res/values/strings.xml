@@ -2,6 +2,7 @@
 <resources>
     <string name="app_name">IntelliQuiz Camera</string>
     <string name="scan_qr">Scan Desktop QR</string>
+    <string name="scan_prompt">Point at the QR code on your desktop exam screen</string>
     <string name="start_monitor">Start environmental monitor</string>
     <string name="scan_instructions">1. On the exam PC, open the phone QR step.\n2. Scan the QR with this phone (Camera / Chrome).\n3. If asked, tap Advanced → Proceed for the security warning.\n4. Tap Allow for camera and keep this screen open.\n\nThis app also opens the QR https link directly and locks into camera mode.</string>
 </resources>

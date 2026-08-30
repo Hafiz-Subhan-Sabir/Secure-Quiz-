@@ -513,6 +513,11 @@
               </div>
             </div>
 
+            <div id="loginEnroll" class="hidden">
+              <p class="lead">First time on this PC: enroll your face so we can verify it is really you before each exam.</p>
+              <p class="note">Look at the webcam in good lighting. We capture a few samples — nothing is uploaded until you start an exam.</p>
+            </div>
+
             <p class="err hidden" id="loginErr"></p>
           </div>
         </section>
@@ -693,7 +698,7 @@
       let pollTimer = null;
       let camTimer = null;
       let phase = "login";
-      let loginPhase = "creds"; // creds | exam
+      let loginPhase = "creds"; // creds | enroll | exam
       let setupMode = "webcam";
       let lastStatus = null;
       let autoPhoneSwitched = false;
@@ -903,6 +908,10 @@
           if (loginPhase === "creds") {
             hint.innerHTML = "<strong>Next:</strong> Enter your email and password, then sign in.";
             primary.textContent = "Sign in";
+            primary.disabled = false;
+          } else if (loginPhase === "enroll") {
+            hint.innerHTML = "<strong>Next:</strong> Look at the webcam, then enroll your face.";
+            primary.textContent = "Enroll my face →";
             primary.disabled = false;
           } else {
             hint.innerHTML = "<strong>Next:</strong> Choose your exam, then continue to the camera check.";
@@ -1197,6 +1206,7 @@
           });
           await api("/api/phase/exam", { method: "POST" });
           setStep("exam");
+          try { await document.documentElement.requestFullscreen(); } catch { /* optional */ }
           qIndex = 0;
           renderQuestion();
           startCamFeed();
@@ -1210,6 +1220,27 @@
         }
       }
 
+      async function doEnroll() {
+        $("loginErr").classList.add("hidden");
+        $("btnFooterPrimary").disabled = true;
+        $("btnFooterPrimary").textContent = "Enrolling face…";
+        try {
+          await api("/api/identity/enroll", { method: "POST" });
+          loginPhase = "exam";
+          $("loginEnroll").classList.add("hidden");
+          $("loginExam").classList.remove("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Pick exam";
+          $("loginTitle").textContent = "Choose your exam";
+          $("loginLead").textContent = "Face enrolled. Next we’ll verify you match before the quiz starts.";
+          await loadExams();
+          syncFooter();
+        } catch (e) {
+          $("loginErr").textContent = String(e.message || e);
+          $("loginErr").classList.remove("hidden");
+          syncFooter();
+        }
+      }
+
       async function doLogin() {
         $("loginErr").classList.add("hidden");
         try {
@@ -1217,6 +1248,20 @@
             method: "POST",
             body: JSON.stringify({ email: $("email").value, password: $("password").value }),
           });
+          const id = await api("/api/identity/status");
+          if (id.needs_enrollment) {
+            loginPhase = "enroll";
+            $("loginCreds").classList.add("hidden");
+            $("loginEnroll").classList.remove("hidden");
+            $("loginChip").textContent = "Step 1 — Enroll face";
+            $("loginTitle").textContent = "Enroll your face";
+            $("loginLead").textContent = "Required once per PC. This verifies your identity before exams.";
+            setStep("login");
+            startCamFeed();
+            startPolling();
+            syncFooter();
+            return;
+          }
           await loadExams();
           loginPhase = "exam";
           $("loginCreds").classList.add("hidden");
@@ -1264,6 +1309,7 @@
       $("btnFooterPrimary").onclick = async () => {
         if (phase === "login") {
           if (loginPhase === "creds") await doLogin();
+          else if (loginPhase === "enroll") await doEnroll();
           else await doStartExam();
           return;
         }

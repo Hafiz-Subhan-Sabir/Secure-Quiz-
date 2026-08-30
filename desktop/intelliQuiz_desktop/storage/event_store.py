@@ -41,6 +41,9 @@ class EncryptedEventStore:
         self._lock = threading.RLock()
         # check_same_thread=False: FastAPI serves requests on worker threads
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        with self._conn:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS events (
@@ -78,6 +81,14 @@ class EncryptedEventStore:
             )
             self._conn.commit()
         return LocalEvent(eid, session_id, type, ts, float(severity), payload, False)
+
+    def pending_session_ids(self, limit: int = 50) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT session_id FROM events WHERE synced=0 ORDER BY ts ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [r[0] for r in rows]
 
     def unsynced(self, session_id: str, limit: int = 100) -> list[LocalEvent]:
         with self._lock:

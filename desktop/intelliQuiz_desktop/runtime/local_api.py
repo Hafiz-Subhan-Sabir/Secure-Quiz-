@@ -87,6 +87,17 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/identity/status")
+    def identity_status() -> dict[str, Any]:
+        return ctrl.identity_status()
+
+    @app.post("/api/identity/enroll")
+    def identity_enroll() -> dict[str, Any]:
+        try:
+            return ctrl.enroll_identity()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/phase/exam")
     def phase_exam(require_pair: bool = False) -> dict[str, Any]:
         try:

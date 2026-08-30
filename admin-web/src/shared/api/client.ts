@@ -15,6 +15,31 @@ export type ExamSummary = {
   proctoring_profile_id: string | null;
 };
 
+export type ExamDetail = ExamSummary & {
+  instructions: string;
+  question_count: number;
+};
+
+export type QuestionAdmin = {
+  id: string;
+  prompt: string;
+  choices: string[];
+  correct_index: number;
+  order_index: number;
+  points: number;
+};
+
+export type ProctoringProfile = {
+  id: string;
+  name: string;
+  strictness: "low" | "medium" | "high" | "lockdown";
+  warn_threshold: number;
+  flag_threshold: number;
+  terminate_threshold: number;
+  require_android_camera: boolean;
+  blacklist_apps_csv: string;
+};
+
 export type EvidenceFrame = {
   event_id: string;
   captured_at: string;
@@ -110,7 +135,12 @@ export const api = {
     }),
   listExams: (signal?: AbortSignal) => request<ExamSummary[]>("/exams", { signal }),
   createExam: (
-    body: { title: string; duration_minutes: number; instructions?: string },
+    body: {
+      title: string;
+      duration_minutes: number;
+      instructions?: string;
+      proctoring_profile_id?: string | null;
+    },
     signal?: AbortSignal,
   ) =>
     request<ExamSummary>("/exams", {
@@ -118,8 +148,78 @@ export const api = {
       body: JSON.stringify(body),
       signal,
     }),
+  getExam: (examId: string, signal?: AbortSignal) =>
+    request<ExamDetail>(`/exams/${examId}`, { signal }),
+  updateExam: (
+    examId: string,
+    body: Partial<{
+      title: string;
+      duration_minutes: number;
+      instructions: string;
+      proctoring_profile_id: string | null;
+    }>,
+    signal?: AbortSignal,
+  ) =>
+    request<ExamDetail>(`/exams/${examId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+  listQuestions: (examId: string, signal?: AbortSignal) =>
+    request<QuestionAdmin[]>(`/exams/${examId}/questions`, { signal }),
+  createQuestion: (
+    examId: string,
+    body: {
+      prompt: string;
+      choices: string[];
+      correct_index: number;
+      points?: number;
+    },
+    signal?: AbortSignal,
+  ) =>
+    request<QuestionAdmin>(`/exams/${examId}/questions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+  deleteQuestion: (examId: string, questionId: string, signal?: AbortSignal) =>
+    request<void>(`/exams/${examId}/questions/${questionId}`, { method: "DELETE", signal }),
+  updateQuestion: (
+    examId: string,
+    questionId: string,
+    body: {
+      prompt: string;
+      choices: string[];
+      correct_index: number;
+      points?: number;
+    },
+    signal?: AbortSignal,
+  ) =>
+    request<QuestionAdmin>(`/exams/${examId}/questions/${questionId}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+      signal,
+    }),
   publishExam: (examId: string, signal?: AbortSignal) =>
     request<ExamSummary>(`/exams/${examId}/publish`, { method: "POST", signal }),
+  listProctoringProfiles: (signal?: AbortSignal) =>
+    request<ProctoringProfile[]>("/proctoring-profiles", { signal }),
+  createProctoringProfile: (body: Omit<ProctoringProfile, "id">, signal?: AbortSignal) =>
+    request<ProctoringProfile>("/proctoring-profiles", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+  updateProctoringProfile: (
+    profileId: string,
+    body: Omit<ProctoringProfile, "id">,
+    signal?: AbortSignal,
+  ) =>
+    request<ProctoringProfile>(`/proctoring-profiles/${profileId}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+      signal,
+    }),
   listAttempts: (signal?: AbortSignal) =>
     request<AttemptSummary[]>("/sessions/attempts", { signal }),
   getReport: (sessionId: string, signal?: AbortSignal) =>

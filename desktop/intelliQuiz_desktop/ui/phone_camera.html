@@ -278,13 +278,15 @@
           canvas.width = Math.min(640, video.videoWidth);
           canvas.height = Math.round(canvas.width * (video.videoHeight / video.videoWidth));
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const frameTs = new Date().toISOString();
+          sendJson({ type: "frame_meta", ts: frameTs, source: "phone_camera" });
           canvas.toBlob((blob) => {
             if (!blob || !ws || ws.readyState !== WebSocket.OPEN) return;
             blob.arrayBuffer().then((buf) => {
               try { ws.send(buf); } catch { /* ignore */ }
             });
           }, "image/jpeg", 0.55);
-        }, 4000);
+        }, 2000);
       }
 
       document.addEventListener("visibilitychange", () => {

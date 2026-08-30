@@ -9,6 +9,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -67,6 +68,8 @@ class PairingHub:
         self._server: Any = None
         self._last_phone_evidence_at = 0.0
         self._phone_frame_count = 0
+        self._last_phone_frame_ts = ""
+        self._last_desktop_frame_ts = ""
 
     def begin_session(self, *, session_id: str, pairing_token: str, exam_code: str | None = None) -> dict[str, Any]:
         lan = discover_lan_ip()
@@ -258,6 +261,9 @@ class PairingHub:
                     self.state.last_android_message = "Phone camera frame received"
                     self._phone_frame_count += 1
                     frame_n = self._phone_frame_count
+                    phone_ts = self._last_phone_frame_ts
+                    desktop_ts = datetime.now(UTC).isoformat()
+                    self._last_desktop_frame_ts = desktop_ts
                 # Persist phone JPEGs as admin evidence on a cooldown (not every frame)
                 now = time.time()
                 if self.on_android_event and (now - self._last_phone_evidence_at) >= 12.0:
@@ -277,6 +283,8 @@ class PairingHub:
                             "image_data_uri": f"data:image/jpeg;base64,{b64}",
                             "capture_reason": "android_frame",
                             "android_frame_index": frame_n,
+                            "phone_frame_ts": phone_ts,
+                            "desktop_receive_ts": desktop_ts,
                         },
                     )
                 return
@@ -302,6 +310,11 @@ class PairingHub:
                     self.on_paired()
             else:
                 await self._send(websocket, {"type": "pair_fail", "reason": "token_mismatch"})
+            return
+
+        if msg_type == "frame_meta":
+            with self._lock:
+                self._last_phone_frame_ts = str(data.get("ts") or "")
             return
 
         if msg_type == "camera_alive":

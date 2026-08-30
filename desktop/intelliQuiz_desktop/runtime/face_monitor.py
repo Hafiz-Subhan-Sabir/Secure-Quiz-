@@ -62,6 +62,16 @@ class FaceMonitor:
         self._last_soft_log_at = 0.0
         self._ema_risk = 0.0
         self._prev_yaw: float | None = None
+        self._warn_threshold = 0.4
+        self._terminate_threshold = 0.9
+        self._last_terminate_at = 0.0
+        self._latest_identity_features: np.ndarray | None = None
+
+    def apply_proctoring(self, *, warn: float, flag: float, terminate: float) -> None:
+        """Apply server proctoring profile thresholds."""
+        self._warn_threshold = float(warn)
+        self._terminate_threshold = float(terminate)
+        self.settings.gesture_capture_threshold = float(flag)
 
     def start(self, session_id: str) -> None:
         self._session_id = session_id
@@ -133,6 +143,12 @@ class FaceMonitor:
     def latest_jpeg(self) -> bytes | None:
         with self._lock:
             return self._latest_jpeg
+
+    def identity_sample(self) -> np.ndarray | None:
+        with self._lock:
+            if self._latest_identity_features is None:
+                return None
+            return self._latest_identity_features.copy()
 
     def force_capture(
         self,
@@ -258,6 +274,16 @@ class FaceMonitor:
                 try:
                     result = self._landmarker.detect_bgr(frame)
                     faces = list(result.face_landmarks or [])
+                    if len(faces) == 1:
+                        try:
+                            from intelliQuiz_desktop.ai.landmarks import landmarks_to_features
+                            from intelliQuiz_desktop.security.identity import embedding_from_features
+
+                            feat = landmarks_to_features(faces[0])
+                            with self._lock:
+                                self._latest_identity_features = embedding_from_features(feat)
+                        except Exception:
+                            pass
                     analysis = self.engine.analyze_landmarks(faces)
                     self._handle_analysis(frame, analysis)
                 except Exception as exc:
@@ -305,6 +331,22 @@ class FaceMonitor:
                 self.snapshot.last_gesture = pred.name
                 self.snapshot.message = pred.plain_language
             self.snapshot.ai_ready = self.engine.ready
+            if (
+                self._ema_risk >= self._terminate_threshold
+                and self.on_event
+                and (now - self._last_terminate_at) >= 60.0
+            ):
+                self._last_terminate_at = now
+                self.on_event(
+                    "gesture_risk",
+                    self._ema_risk,
+                    {
+                        "gesture_label": "TERMINATE_THRESHOLD",
+                        "plain_language": "Risk exceeded exam terminate threshold — session flagged.",
+                        "source": "primary_webcam",
+                        "terminate_threshold": self._terminate_threshold,
+                    },
+                )
 
         if pred is None:
             return
@@ -340,7 +382,7 @@ class FaceMonitor:
             payload["pitch"] = analysis.pitch
             payload["source_detector"] = pred.source
             self._record_evidence(payload, severity=risk, event_type=event_type)
-        elif self.on_event and risk >= 0.4 and (now - self._last_soft_log_at) >= 20.0:
+        elif self.on_event and risk >= self._warn_threshold and (now - self._last_soft_log_at) >= 20.0:
             # Soft integrity log without heavy images (still visible in admin timeline)
             self._last_soft_log_at = now
             self.on_event(

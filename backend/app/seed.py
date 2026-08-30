@@ -58,6 +58,39 @@ SAMPLE_QUESTIONS = [
     },
 ]
 
+CYBER_QUESTIONS = [
+    {
+        "prompt": "What does TLS primarily protect?",
+        "choices": [
+            "CPU temperature",
+            "Data in transit between client and server",
+            "Hard disk fragmentation",
+            "Screen brightness",
+        ],
+        "correct_index": 1,
+    },
+    {
+        "prompt": "Which is the best practice for exam passwords?",
+        "choices": [
+            "Share one password with the class",
+            "Use unique strong passwords per account",
+            "Write passwords on the whiteboard",
+            "Disable authentication during exams",
+        ],
+        "correct_index": 1,
+    },
+    {
+        "prompt": "What is phishing?",
+        "choices": [
+            "A network cable type",
+            "Tricking users into revealing sensitive information",
+            "Encrypting a database",
+            "Running antivirus scans",
+        ],
+        "correct_index": 1,
+    },
+]
+
 
 def seed_if_empty() -> None:
     db = SessionLocal()
@@ -104,6 +137,7 @@ def seed_if_empty() -> None:
             db.commit()
 
         _ensure_sample_questions(db)
+        _ensure_second_exam(db)
         _ensure_demo_attempt(db)
     finally:
         db.close()
@@ -127,6 +161,38 @@ def _ensure_sample_questions(db) -> None:
                     order_index=i,
                 )
             )
+    db.commit()
+
+
+def _ensure_second_exam(db) -> None:
+    """Ensure a second published quiz exists for multi-exam selection."""
+    title = "Cybersecurity Basics Quiz"
+    existing = db.scalar(select(Exam).where(Exam.title == title).limit(1))
+    if existing is not None:
+        return
+    profile = db.scalar(select(ProctoringProfile).limit(1))
+    instructor = db.scalar(select(User).where(User.role == "instructor").limit(1))
+    exam = Exam(
+        title=title,
+        instructions="Answer all questions. Phone camera pairing recommended.",
+        duration_minutes=30,
+        status="published",
+        proctoring_profile_id=profile.id if profile else None,
+        created_by=instructor.id if instructor else None,
+    )
+    db.add(exam)
+    db.flush()
+    for i, item in enumerate(CYBER_QUESTIONS):
+        db.add(
+            Question(
+                exam_id=exam.id,
+                prompt=item["prompt"],
+                choices_json=json.dumps(item["choices"]),
+                correct_index=item["correct_index"],
+                points=1,
+                order_index=i,
+            )
+        )
     db.commit()
 
 

@@ -126,8 +126,10 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     threading.Thread(target=run_phone_https, name="phone-https", daemon=True).start()
 
-    if not args.no_browser:
+    if not args.no_browser and not settings.exam_kiosk_mode:
         webbrowser.open(url)
+    elif settings.exam_kiosk_mode:
+        print("  Kiosk     ", "Exam opens in dedicated Edge/Chrome app window")
 
     try:
         uvicorn.run(app, host=settings.local_ui_host, port=settings.local_ui_port, log_level="info")
