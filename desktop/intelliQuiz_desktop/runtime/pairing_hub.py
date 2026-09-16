@@ -70,6 +70,7 @@ class PairingHub:
         self._phone_frame_count = 0
         self._last_phone_frame_ts = ""
         self._last_desktop_frame_ts = ""
+        self._latest_jpeg: bytes | None = None
 
     def begin_session(self, *, session_id: str, pairing_token: str, exam_code: str | None = None) -> dict[str, Any]:
         lan = discover_lan_ip()
@@ -107,9 +108,16 @@ class PairingHub:
                 last_alive_at=0.0,
                 camera_live=False,
             )
+            self._latest_jpeg = None
+            self._phone_frame_count = 0
         # Phone pairing uses FastAPI WSS on the HTTPS phone port (8767), not this legacy WS.
         # Keep PairingHub as state + message handler only.
         return self.status()
+
+    def latest_jpeg(self) -> bytes | None:
+        """Most recent JPEG frame from the phone camera (for identity enroll)."""
+        with self._lock:
+            return self._latest_jpeg
 
     def mark_paired_local(self) -> None:
         """UI / lab override when a physical phone is unavailable."""
@@ -260,6 +268,7 @@ class PairingHub:
                     self.state.camera_live = True
                     self.state.last_android_message = "Phone camera frame received"
                     self._phone_frame_count += 1
+                    self._latest_jpeg = raw
                     frame_n = self._phone_frame_count
                     phone_ts = self._last_phone_frame_ts
                     desktop_ts = datetime.now(UTC).isoformat()

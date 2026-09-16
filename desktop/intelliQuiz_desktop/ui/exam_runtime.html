@@ -514,8 +514,18 @@
             </div>
 
             <div id="loginEnroll" class="hidden">
-              <p class="lead">First time on this PC: enroll your face so we can verify it is really you before each exam.</p>
-              <p class="note">Look at the webcam in good lighting. We capture a few samples — nothing is uploaded until you start an exam.</p>
+              <p class="lead" id="enrollLead">First time on this PC: enroll your face so we can verify it is really you before each exam.</p>
+              <p class="note" id="enrollNote">Look at the webcam in good lighting. We capture a few samples — nothing is uploaded until you start an exam.</p>
+              <div id="enrollPhonePanel" class="hidden" style="margin-top:1rem">
+                <p class="lead" style="margin:0 0 0.5rem">Scan with your phone to enroll</p>
+                <p class="note">Same Wi‑Fi as this PC. Point the phone at your face after pairing.</p>
+                <div class="qr-box"><img id="enrollQrImg" alt="Enrollment QR" /></div>
+                <div class="url-box" id="enrollQrUrl">Generating phone link…</div>
+                <button type="button" class="ghost" id="btnCopyEnrollUrl" style="margin:0.5rem 0">Copy phone link</button>
+                <p class="note" id="enrollPhoneStatus">Waiting for phone…</p>
+              </div>
+              <button type="button" class="linkish" id="btnEnrollPhone" style="margin-top:0.75rem">No webcam? Use phone to enroll →</button>
+              <button type="button" class="linkish" id="btnDeferPhone" style="display:block;margin-top:0.35rem">Skip for now — use phone at camera step →</button>
             </div>
 
             <p class="err hidden" id="loginErr"></p>
@@ -700,6 +710,7 @@
       let phase = "login";
       let loginPhase = "creds"; // creds | enroll | exam
       let setupMode = "webcam";
+      let enrollMode = "webcam"; // webcam | phone
       let lastStatus = null;
       let autoPhoneSwitched = false;
       let advancing = false;
@@ -716,8 +727,33 @@
         const text = await r.text();
         let data = null;
         try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
-        if (!r.ok) throw new Error((data && (data.detail || data.message)) || r.statusText);
+        if (!r.ok) {
+          let detail = data && data.detail;
+          if (Array.isArray(detail)) detail = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+          throw new Error(detail || data.message || r.statusText);
+        }
         return data;
+      }
+
+      function resetToLogin(message) {
+        loginPhase = "creds";
+        enrollMode = "webcam";
+        $("loginCreds").classList.remove("hidden");
+        $("loginEnroll").classList.add("hidden");
+        $("loginExam").classList.add("hidden");
+        $("enrollPhonePanel").classList.add("hidden");
+        $("loginChip").textContent = "Step 1 of 3 — Sign in";
+        $("loginTitle").textContent = "Sign in to start";
+        $("loginLead").textContent = "Use your student account. Next you’ll pick an exam and check your camera.";
+        $("loginErr").textContent = message || "Session expired — sign in again.";
+        $("loginErr").classList.remove("hidden");
+        $("topMeta").textContent = "Ready · sign in below";
+        setStep("login");
+        syncFooter();
+      }
+
+      function sessionLost(st) {
+        return !st || !st.email;
       }
 
       function setStep(name) {
@@ -910,9 +946,25 @@
             primary.textContent = "Sign in";
             primary.disabled = false;
           } else if (loginPhase === "enroll") {
-            hint.innerHTML = "<strong>Next:</strong> Look at the webcam, then enroll your face.";
-            primary.textContent = "Enroll my face →";
-            primary.disabled = false;
+            if (enrollMode === "phone") {
+              const paired = lastStatus && lastStatus.pairing && lastStatus.pairing.paired;
+              if (paired) {
+                hint.classList.add("ok-text");
+                hint.innerHTML = "<strong>Phone paired.</strong> Look at your phone camera, then enroll.";
+                primary.textContent = "Enroll face from phone →";
+                primary.disabled = false;
+                primary.classList.add("ready");
+              } else {
+                hint.innerHTML = "<strong>Next:</strong> Scan the enrollment QR with your phone, then wait for paired.";
+                primary.textContent = "Waiting for phone…";
+                primary.disabled = true;
+              }
+            } else {
+              hint.innerHTML = "<strong>Next:</strong> Look at the webcam, or use your phone if you have no PC camera.";
+              primary.textContent = "Enroll my face →";
+              primary.disabled = false;
+            }
+            return;
           } else {
             hint.innerHTML = "<strong>Next:</strong> Choose your exam, then continue to the camera check.";
             primary.textContent = "Continue to camera check →";
@@ -1130,6 +1182,18 @@
             : "Warning: QR is not a web link — restart the desktop client.";
         }
 
+        if (loginPhase === "enroll" && enrollMode === "phone") {
+          if (pair.qr_png_data_uri) $("enrollQrImg").src = pair.qr_png_data_uri;
+          if (phoneUrl) $("enrollQrUrl").textContent = phoneUrl;
+          const frames = pair.android_frames || 0;
+          $("enrollPhoneStatus").textContent = paired
+            ? (frames > 0
+              ? `Phone paired · ${frames} frames — look at your face, then enroll`
+              : "Phone paired — allow camera and center your face")
+            : "Waiting for phone… scan the QR above";
+          $("enrollPhoneStatus").className = paired ? "note ok-text" : "note";
+        }
+
         $("sIdent").textContent = st.identity_source || "—";
         $("sPhone").textContent = paired ? "paired" : "not paired";
         $("sRisk").textContent = riskPct + "%";
@@ -1164,7 +1228,16 @@
 
       async function pollStatus() {
         try {
-          applyStatus(await api("/api/status"));
+          const st = await api("/api/status");
+          applyStatus(st);
+          // Desktop restart clears login while the browser still shows enroll/exam UI
+          if (
+            sessionLost(st) &&
+            phase === "login" &&
+            (loginPhase === "enroll" || loginPhase === "exam")
+          ) {
+            resetToLogin("Desktop restarted — please sign in again, then continue.");
+          }
         } catch {
           $("topMeta").textContent = "Runtime offline — restart the desktop client";
         }
@@ -1223,10 +1296,27 @@
       async function doEnroll() {
         $("loginErr").classList.add("hidden");
         $("btnFooterPrimary").disabled = true;
-        $("btnFooterPrimary").textContent = "Enrolling face…";
+        $("btnFooterPrimary").textContent = enrollMode === "phone" ? "Enrolling from phone…" : "Enrolling face…";
         try {
-          await api("/api/identity/enroll", { method: "POST" });
+          if (enrollMode !== "phone") {
+            // Don't hang waiting for a missing webcam — switch to phone QR instead
+            try {
+              const st = await api("/api/status");
+              if (!(st.monitor && st.monitor.camera_ok)) {
+                await startPhoneEnroll();
+                $("loginErr").textContent = "No PC webcam — scan the QR with your phone, then tap Enroll face from phone.";
+                $("loginErr").classList.remove("hidden");
+                syncFooter();
+                return;
+              }
+            } catch { /* continue with normal enroll */ }
+          }
+          await api("/api/identity/enroll", {
+            method: "POST",
+            body: JSON.stringify({ source: enrollMode === "phone" ? "phone" : "auto" }),
+          });
           loginPhase = "exam";
+          enrollMode = "webcam";
           $("loginEnroll").classList.add("hidden");
           $("loginExam").classList.remove("hidden");
           $("loginChip").textContent = "Step 1 of 3 — Pick exam";
@@ -1237,7 +1327,66 @@
         } catch (e) {
           $("loginErr").textContent = String(e.message || e);
           $("loginErr").classList.remove("hidden");
+          $("btnFooterPrimary").disabled = false;
           syncFooter();
+        }
+      }
+
+      async function startPhoneEnroll() {
+        $("loginErr").classList.add("hidden");
+        try {
+          const st = await api("/api/status");
+          if (sessionLost(st)) {
+            resetToLogin("Please sign in first, then tap Use phone to enroll.");
+            return;
+          }
+          const res = await api("/api/identity/enroll/begin-phone", { method: "POST" });
+          enrollMode = "phone";
+          $("enrollLead").textContent = "No PC webcam needed — enroll with your phone camera.";
+          $("enrollNote").textContent = "Scan the QR, allow camera, look at your face on the phone, then tap Enroll.";
+          $("enrollPhonePanel").classList.remove("hidden");
+          $("btnEnrollPhone").textContent = "Refresh phone QR";
+          const pair = (res && res.pairing) || {};
+          if (pair.qr_png_data_uri) $("enrollQrImg").src = pair.qr_png_data_uri;
+          const url = pair.qr_text || pair.mobile_camera_url || "";
+          $("enrollQrUrl").textContent = url || "Generating…";
+          startPolling();
+          await pollStatus();
+          syncFooter();
+        } catch (e) {
+          const msg = String(e.message || e);
+          if (/sign in/i.test(msg)) resetToLogin(msg);
+          else {
+            $("loginErr").textContent = msg;
+            $("loginErr").classList.remove("hidden");
+          }
+        }
+      }
+
+      async function deferPhoneEnroll() {
+        $("loginErr").classList.add("hidden");
+        try {
+          const st = await api("/api/status");
+          if (sessionLost(st)) {
+            resetToLogin("Please sign in first, then you can skip to phone camera.");
+            return;
+          }
+          await api("/api/identity/enroll/defer-phone", { method: "POST" });
+          loginPhase = "exam";
+          $("loginEnroll").classList.add("hidden");
+          $("loginExam").classList.remove("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Pick exam";
+          $("loginTitle").textContent = "Choose your exam";
+          $("loginLead").textContent = "Phone will be your identity camera. Pick an exam, then scan the QR at the camera step.";
+          await loadExams();
+          syncFooter();
+        } catch (e) {
+          const msg = String(e.message || e);
+          if (/sign in/i.test(msg)) resetToLogin(msg);
+          else {
+            $("loginErr").textContent = msg;
+            $("loginErr").classList.remove("hidden");
+          }
         }
       }
 
@@ -1251,6 +1400,7 @@
           const id = await api("/api/identity/status");
           if (id.needs_enrollment) {
             loginPhase = "enroll";
+            enrollMode = "webcam";
             $("loginCreds").classList.add("hidden");
             $("loginEnroll").classList.remove("hidden");
             $("loginChip").textContent = "Step 1 — Enroll face";
@@ -1259,6 +1409,17 @@
             setStep("login");
             startCamFeed();
             startPolling();
+            // If no webcam, surface the phone path immediately
+            setTimeout(async () => {
+              try {
+                const st = await api("/api/status");
+                if (!(st.monitor && st.monitor.camera_ok)) {
+                  $("enrollLead").textContent = "No PC webcam detected — you can enroll with your phone.";
+                  $("enrollNote").textContent = "Tap “Use phone to enroll”, or skip and pair the phone at the camera step.";
+                }
+              } catch { /* ignore */ }
+              syncFooter();
+            }, 800);
             syncFooter();
             return;
           }
@@ -1353,6 +1514,18 @@
       $("btnSwitchWebcam").onclick = () => {
         autoPhoneSwitched = true; // don't auto-bounce back immediately
         setSetupMode("webcam");
+      };
+      $("btnEnrollPhone").onclick = () => startPhoneEnroll();
+      $("btnDeferPhone").onclick = () => deferPhoneEnroll();
+      $("btnCopyEnrollUrl").onclick = async () => {
+        const t = $("enrollQrUrl").textContent || "";
+        if (!t.startsWith("http")) return;
+        try {
+          await navigator.clipboard.writeText(t);
+          $("enrollPhoneStatus").textContent = "Link copied — paste into phone browser";
+        } catch {
+          $("enrollPhoneStatus").textContent = t;
+        }
       };
       $("examSelect").onchange = () => syncFooter();
       $("password").addEventListener("keydown", (e) => {

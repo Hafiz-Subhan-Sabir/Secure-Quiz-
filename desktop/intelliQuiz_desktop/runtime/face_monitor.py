@@ -210,22 +210,42 @@ class FaceMonitor:
             return
 
         cap = None
-        # Prefer MSMF on Windows — CAP_DSHOW can hang forever on some drivers
-        for backend in (getattr(cv2, "CAP_MSMF", 700), getattr(cv2, "CAP_DSHOW", 700), 0):
+        # Open webcam with a hard timeout — Windows drivers can hang forever with no camera
+        opened: list = []
+
+        def _open_cam() -> None:
+            import cv2 as _cv2
+
+            for backend in (getattr(_cv2, "CAP_MSMF", 700), getattr(_cv2, "CAP_DSHOW", 700), 0):
+                if self._stop.is_set():
+                    return
+                try:
+                    trial = _cv2.VideoCapture(self.settings.camera_index, backend)
+                    if trial.isOpened():
+                        opened.append(trial)
+                        return
+                    trial.release()
+                except Exception:
+                    continue
             try:
-                trial = cv2.VideoCapture(self.settings.camera_index, backend)
+                trial = _cv2.VideoCapture(self.settings.camera_index)
                 if trial.isOpened():
-                    cap = trial
-                    break
-                trial.release()
+                    opened.append(trial)
+                else:
+                    trial.release()
             except Exception:
-                continue
+                pass
+
+        opener = threading.Thread(target=_open_cam, name="webcam-open", daemon=True)
+        opener.start()
+        opener.join(timeout=4.0)
+        if opened:
+            cap = opened[0]
         if cap is None or not cap.isOpened():
-            cap = cv2.VideoCapture(self.settings.camera_index)
-        if not cap.isOpened():
             with self._lock:
                 self.snapshot.message = "Webcam unavailable"
                 self.snapshot.camera_ok = False
+                self.snapshot.running = True
             return
 
         # Prefer a modest resolution for stable FPS on student laptops

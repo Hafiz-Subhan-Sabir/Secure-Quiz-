@@ -18,7 +18,7 @@ from intelliQuiz_desktop.runtime.exam_shell import ExamShell
 from intelliQuiz_desktop.runtime.face_monitor import FaceMonitor
 from intelliQuiz_desktop.runtime.focus_guard import FocusGuard
 from intelliQuiz_desktop.runtime.pairing_hub import PairingHub
-from intelliQuiz_desktop.security.identity import merge_samples, verify
+from intelliQuiz_desktop.security.identity import embedding_from_jpeg, merge_samples, verify
 from intelliQuiz_desktop.storage.identity_store import IdentityStore
 from intelliQuiz_desktop.storage.event_store import EncryptedEventStore
 from intelliQuiz_desktop.sync.api_client import ApiClient
@@ -38,6 +38,7 @@ class SessionState:
     paper: dict[str, Any] | None = None
     answers: dict[str, int] = field(default_factory=dict)
     started_at: str = ""
+    identity_deferred_phone: bool = False
     error: str = ""
     android_paired: bool = False
     face_verified: bool = False
@@ -57,7 +58,7 @@ class SessionController:
         self.store = EncryptedEventStore(self.settings.data_dir / "events.db")
         self.sync = SyncWorker(self.store, self.api, batch_size=self.settings.sync_batch_size)
         self.state = SessionState()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
         self.engine = OnDeviceAIEngine(self.settings.model_path)
         try:
@@ -95,12 +96,56 @@ class SessionController:
     def identity_status(self) -> dict[str, Any]:
         with self._lock:
             email = self.state.email
+            deferred = self.state.identity_deferred_phone
         if not email:
-            return {"enrolled": False, "needs_enrollment": True}
+            return {"enrolled": False, "needs_enrollment": True, "camera_ok": False}
         enrolled = self.identity_store.is_enrolled(email)
-        return {"enrolled": enrolled, "needs_enrollment": not enrolled, "email": email}
+        mon = self.monitor.status()
+        pair = self.pairing.status()
+        return {
+            "enrolled": enrolled or deferred,
+            "needs_enrollment": not enrolled and not deferred,
+            "email": email,
+            "deferred_phone": deferred,
+            "camera_ok": bool(mon.get("camera_ok")),
+            "phone_paired": bool(pair.get("paired")),
+            "phone_frames": int(pair.get("android_frames") or 0),
+            "pairing": pair,
+        }
 
-    def enroll_identity(self, *, samples: int = 5) -> dict[str, Any]:
+    def begin_enrollment_pairing(self) -> dict[str, Any]:
+        """Start a phone QR session before an exam so identity can enroll from phone."""
+        import secrets
+        import uuid
+
+        with self._lock:
+            email = self.state.email
+        if not email:
+            raise RuntimeError("Sign in before phone enrollment")
+        session_id = f"enroll-{uuid.uuid4().hex[:12]}"
+        token = secrets.token_urlsafe(18)
+        with self._lock:
+            # Keep enroll pairing ids until a real exam overwrites them
+            if not self.state.session_id or self.state.session_id.startswith("enroll-"):
+                self.state.session_id = session_id
+                self.state.pairing_token = token
+        pairing = self.pairing.begin_session(
+            session_id=session_id,
+            pairing_token=token,
+            exam_code="Face enrollment",
+        )
+        return {"ok": True, "pairing": pairing}
+
+    def defer_enrollment_to_phone(self) -> dict[str, Any]:
+        """Skip PC webcam enroll; student will use phone camera at the exam camera step."""
+        with self._lock:
+            if not self.state.email:
+                raise RuntimeError("Sign in first")
+            self.state.identity_deferred_phone = True
+            self.state.identity_source = "phone"
+        return {"ok": True, "deferred_phone": True, "needs_enrollment": False}
+
+    def enroll_identity(self, *, samples: int = 5, source: str = "auto") -> dict[str, Any]:
         with self._lock:
             email = self.state.email
         if not email:
@@ -108,11 +153,28 @@ class SessionController:
         if self.identity_store.is_enrolled(email):
             return {"ok": True, "enrolled": True, "message": "Already enrolled"}
 
+        prefer = (source or "auto").strip().lower()
+        mon = self.monitor.status()
+        pair = self.pairing.status()
+        phone_ready = bool(pair.get("paired"))
+
+        if prefer == "phone":
+            return self._enroll_from_phone(email=email, samples=samples)
+
+        # No webcam (or already on phone path): do not block 20s waiting for a missing camera
+        if prefer == "auto" and not mon.get("camera_ok"):
+            if phone_ready:
+                return self._enroll_from_phone(email=email, samples=samples)
+            raise RuntimeError(
+                "No PC webcam detected. Tap “Use phone to enroll”, scan the QR, "
+                "or tap “Skip for now — use phone at camera step”."
+            )
+
         if not self.monitor.snapshot.running:
             self.monitor.start("identity-enroll")
 
         captured: list = []
-        deadline = time.time() + 20.0
+        deadline = time.time() + 12.0
         while len(captured) < samples and time.time() < deadline:
             mon = self.monitor.status()
             if mon.get("camera_ok") and int(mon.get("face_count") or 0) == 1:
@@ -121,18 +183,89 @@ class SessionController:
                     captured.append(sample)
             time.sleep(0.45)
 
-        if len(captured) < max(3, samples // 2):
-            raise RuntimeError("Could not capture enough face samples. Center one face in good lighting.")
+        if len(captured) >= max(3, samples // 2):
+            embedding = merge_samples(captured)
+            self.identity_store.save(email, embedding)
+            with self._lock:
+                self.state.identity_deferred_phone = False
+                self.state.identity_source = "webcam"
+            return {
+                "ok": True,
+                "enrolled": True,
+                "samples_used": len(captured),
+                "source": "webcam",
+            }
+
+        if self.pairing.status().get("paired"):
+            return self._enroll_from_phone(email=email, samples=samples)
+
+        raise RuntimeError(
+            "Could not enroll from webcam. Tap “Use phone to enroll” or "
+            "“Skip for now — use phone at camera step”."
+        )
+
+    def _enroll_from_phone(self, *, email: str, samples: int = 5) -> dict[str, Any]:
+        pair = self.pairing.status()
+        if not pair.get("paired"):
+            raise RuntimeError(
+                "Phone is not paired yet. Scan the enrollment QR and allow camera on the phone."
+            )
+
+        from intelliQuiz_desktop.ai.landmarks import FaceLandmarkerBundle
+
+        landmarker = FaceLandmarkerBundle(self.settings.face_landmarker_path)
+        captured: list = []
+        seen_hashes: set[int] = set()
+        deadline = time.time() + 25.0
+        try:
+            while len(captured) < samples and time.time() < deadline:
+                jpeg = self.pairing.latest_jpeg()
+                if jpeg:
+                    h = hash(jpeg[:64] + jpeg[-64:] if len(jpeg) > 128 else jpeg)
+                    if h not in seen_hashes:
+                        seen_hashes.add(h)
+                        emb = embedding_from_jpeg(
+                            jpeg,
+                            landmarker_path=self.settings.face_landmarker_path,
+                            landmarker=landmarker,
+                        )
+                        if emb is not None:
+                            captured.append(emb)
+                time.sleep(0.4)
+        finally:
+            try:
+                landmarker.close()
+            except Exception:
+                pass
+
+        if len(captured) < max(2, samples // 2):
+            raise RuntimeError(
+                "Could not capture enough face samples from the phone. "
+                "Hold the phone so your face is centered, well lit, then try again."
+            )
 
         embedding = merge_samples(captured)
         self.identity_store.save(email, embedding)
-        return {"ok": True, "enrolled": True, "samples_used": len(captured)}
+        with self._lock:
+            self.state.identity_deferred_phone = False
+            self.state.identity_source = "phone"
+            self.state.android_paired = True
+        return {
+            "ok": True,
+            "enrolled": True,
+            "samples_used": len(captured),
+            "source": "phone",
+        }
 
     def _verify_identity(self) -> tuple[bool, float]:
         with self._lock:
             email = self.state.email
+            deferred = self.state.identity_deferred_phone
         enrolled = self.identity_store.load(email) if email else None
         if enrolled is None:
+            if deferred:
+                # Phone-only path: verification happens visually via paired phone camera.
+                return True, 1.0
             raise RuntimeError("Enroll your face before starting the exam.")
         sample = self.monitor.identity_sample()
         if sample is None:
@@ -150,6 +283,7 @@ class SessionController:
             self.state.full_name = str(data.get("full_name") or "")
             self.state.role = data["role"]
             self.state.error = ""
+            self.state.identity_deferred_phone = False
         return {
             "ok": True,
             "role": data["role"],
@@ -495,6 +629,12 @@ class SessionController:
     # ── status ─────────────────────────────────────────────────────────
     def status(self) -> dict[str, Any]:
         self._refresh_pause_state()
+        identity = self.identity_status()
+        monitor = self.monitor.status()
+        pairing = self.pairing.status()
+        app_lock = self.app_lock.snapshot()
+        focus = self.focus_guard.snapshot()
+        storage = self._storage_hint()
         with self._lock:
             st = self.state
             return {
@@ -504,7 +644,7 @@ class SessionController:
                 "exam_id": st.exam_id,
                 "exam_title": st.exam_title,
                 "session_id": st.session_id,
-                "android_paired": st.android_paired or self.pairing.status().get("paired"),
+                "android_paired": st.android_paired or pairing.get("paired"),
                 "face_verified": st.face_verified,
                 "identity_source": st.identity_source,
                 "quiz_paused": st.quiz_paused,
@@ -514,13 +654,13 @@ class SessionController:
                 "started_at": st.started_at,
                 "paper": st.paper,
                 "last_result": dict(st.last_result) if st.last_result else None,
-                "monitor": self.monitor.status(),
-                "app_lock": self.app_lock.snapshot(),
-                "focus_guard": self.focus_guard.snapshot(),
-                "identity": self.identity_status(),
-                "pairing": self.pairing.status(),
+                "monitor": monitor,
+                "app_lock": app_lock,
+                "focus_guard": focus,
+                "identity": identity,
+                "pairing": pairing,
                 "ai_ready": self.engine.ready,
-                "storage": self._storage_hint(),
+                "storage": storage,
             }
 
     def resume_after_camera(self) -> dict[str, Any]:

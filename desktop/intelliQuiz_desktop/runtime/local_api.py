@@ -34,6 +34,10 @@ class ConfirmCameraBody(BaseModel):
     prefer_phone: bool = False
 
 
+class EnrollBody(BaseModel):
+    source: str = "auto"  # auto | webcam | phone
+
+
 def create_app(controller: SessionController | None = None) -> FastAPI:
     ctrl = controller or SessionController()
     app = FastAPI(title="IntelliQuiz Desktop Runtime", version="0.1.0")
@@ -92,9 +96,24 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
         return ctrl.identity_status()
 
     @app.post("/api/identity/enroll")
-    def identity_enroll() -> dict[str, Any]:
+    def identity_enroll(body: EnrollBody | None = None) -> dict[str, Any]:
         try:
-            return ctrl.enroll_identity()
+            source = (body.source if body else "auto") or "auto"
+            return ctrl.enroll_identity(source=source)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/identity/enroll/begin-phone")
+    def identity_enroll_begin_phone() -> dict[str, Any]:
+        try:
+            return ctrl.begin_enrollment_pairing()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/identity/enroll/defer-phone")
+    def identity_enroll_defer_phone() -> dict[str, Any]:
+        try:
+            return ctrl.defer_enrollment_to_phone()
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
