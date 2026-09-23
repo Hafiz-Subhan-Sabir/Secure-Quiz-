@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import webbrowser
 from pathlib import Path
 
@@ -69,6 +70,32 @@ def cmd_preview(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _open_desktop_window(url: str) -> None:
+    """Wait for local UI, then open Edge/Chrome app window (desktop-app feel)."""
+    import time
+    import urllib.error
+    import urllib.request
+
+    from intelliQuiz_desktop.runtime.exam_shell import ExamShell, default_exam_profile_dir
+
+    health = url.rstrip("/") + "/api/health"
+    for _ in range(60):
+        try:
+            with urllib.request.urlopen(health, timeout=0.5) as resp:
+                if getattr(resp, "status", 200) < 500:
+                    break
+        except (urllib.error.URLError, TimeoutError, OSError):
+            time.sleep(0.15)
+
+    shell = ExamShell(profile_dir=default_exam_profile_dir())
+    # App window (not fullscreen kiosk) for login / setup — looks like a desktop app.
+    if shell.launch(url, kiosk=False):
+        print(f"  Window   opened with {shell.browser} (app mode)")
+        return
+    webbrowser.open(url)
+    print("  Window   opened in default browser (Edge/Chrome not found)")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Start local Desktop runtime (webcam ML + app lock + QR + quiz UI)."""
     settings = get_settings()
@@ -113,6 +140,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     print("  Model   ", settings.model_path)
     print("  Note    ", "Phone + PC must share the same router (Ethernet+WiFi is OK).")
     print("  Cert    ", "Phone will warn once - tap Advanced then Proceed / Continue.")
+    print("  Tip     ", "Keep this console open; the exam UI opens in its own app window.")
 
     def run_phone_https() -> None:
         uvicorn.run(
@@ -126,10 +154,10 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     threading.Thread(target=run_phone_https, name="phone-https", daemon=True).start()
 
-    if not args.no_browser and not settings.exam_kiosk_mode:
-        webbrowser.open(url)
-    elif settings.exam_kiosk_mode:
-        print("  Kiosk     ", "Exam opens in dedicated Edge/Chrome app window")
+    if not args.no_browser:
+        threading.Thread(target=_open_desktop_window, args=(url,), name="open-ui", daemon=True).start()
+    if settings.exam_kiosk_mode:
+        print("  Kiosk     Exam phase switches to fullscreen Edge/Chrome lock")
 
     try:
         uvicorn.run(app, host=settings.local_ui_host, port=settings.local_ui_port, log_level="info")
@@ -141,7 +169,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="intelliquiz-desktop")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd", required=False)
 
     smoke = sub.add_parser("smoke", help="Login → session → local encrypt → sync")
     smoke.add_argument("--email", default="student@intelliquiz.dev")
@@ -155,7 +183,12 @@ def main() -> None:
     run.add_argument("--no-browser", action="store_true", help="Do not auto-open the UI")
     run.set_defaults(func=cmd_run)
 
-    args = parser.parse_args()
+    # Double-click / bare EXE has no subcommand → start full runtime
+    argv = sys.argv[1:]
+    if not argv or argv[0].startswith("-"):
+        argv = ["run", *argv]
+
+    args = parser.parse_args(argv)
     raise SystemExit(args.func(args))
 
 

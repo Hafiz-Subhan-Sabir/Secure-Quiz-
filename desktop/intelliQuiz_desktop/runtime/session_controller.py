@@ -457,6 +457,9 @@ class SessionController:
             url = f"http://{host}:{self.settings.local_ui_port}/"
             if self.exam_shell.launch(url, kiosk=True):
                 allowed.add(self.exam_shell.pid)
+            # Protect the whole exam Edge/Chrome process tree (multi-process browsers).
+            # Without this, kill_browsers=True terminates the exam UI itself.
+            self.app_lock.set_protected_cmdline_markers({str(self.exam_shell.profile_dir.resolve())})
         self.app_lock.set_allowed_pids(allowed)
         self.focus_guard.set_allowed_pids(allowed)
 

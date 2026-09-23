@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -77,6 +78,13 @@ BROWSER_BLACKLIST = {
     "iexplore",
 }
 
+# Never terminate the exam runtime itself.
+PROTECTED_NAMES = {
+    "intelliquizdesktop",
+    "intelliquiz-desktop",
+    "uvicorn",
+}
+
 
 @dataclass
 class ProcessHit:
@@ -101,7 +109,8 @@ class AppLockController:
     - HARD apps (chat/remote) break exam integrity → detect + kill when enabled.
     - Browsers are cheating channels for notes/AI → flag always; kill only if
       ``kill_browsers`` is True (kiosk / native shell). While the student UI
-      itself runs in a browser, killing browsers would kill the exam client.
+      itself runs in a browser, killing browsers would kill the exam client —
+      so the exam browser profile / process tree is always protected.
     """
 
     def __init__(
@@ -123,10 +132,18 @@ class AppLockController:
         self._extra_hard: set[str] = set()
         self._extra_browser: set[str] = set()
         self._allowed_pids: set[int] = set()
+        self._allowed_roots: set[int] = set()
+        self._protected_markers: set[str] = set()
 
     def set_allowed_pids(self, pids: set[int]) -> None:
         with self._lock:
             self._allowed_pids = {p for p in pids if p > 0}
+            self._allowed_roots = {p for p in pids if p > 0}
+
+    def set_protected_cmdline_markers(self, markers: set[str]) -> None:
+        """Protect browser processes whose command line contains these substrings."""
+        with self._lock:
+            self._protected_markers = {m for m in markers if m}
 
     def apply_profile(self, *, blacklist_csv: str, strictness: str) -> None:
         """Merge server proctoring blacklist into the scanner."""
@@ -175,11 +192,12 @@ class AppLockController:
     def enforce_once(self) -> tuple[list[ProcessHit], list[str]]:
         hits = self.scan_once()
         killed: list[str] = []
-        with self._lock:
-            allowed = set(self._allowed_pids)
+        protected = self._protected_pids()
         if self.kill:
             for hit in hits:
-                if hit.pid in allowed:
+                if hit.pid in protected:
+                    continue
+                if hit.name in PROTECTED_NAMES:
                     continue
                 if hit.category == "browser" and not self.kill_browsers:
                     continue
@@ -194,6 +212,19 @@ class AppLockController:
         if hits and self.on_violation:
             self.on_violation(hits, killed)
         return hits, killed
+
+    def _protected_pids(self) -> set[int]:
+        with self._lock:
+            roots = set(self._allowed_roots)
+            seeds = set(self._allowed_pids)
+            markers = set(self._protected_markers)
+        protected = set(seeds)
+        protected |= _process_tree(roots)
+        if markers:
+            protected |= _pids_matching_cmdline(markers)
+        # Always keep our own runtime PID
+        protected.add(os.getpid())
+        return protected
 
     def _loop(self) -> None:
         while not self._stop.wait(self.interval_sec):
@@ -233,6 +264,8 @@ def list_prohibited(
             pid = int(parts[1])
         except ValueError:
             continue
+        if exe in PROTECTED_NAMES:
+            continue
         if exe in HARD_BLACKLIST or exe.replace(" ", "") in HARD_BLACKLIST or exe in extra_hard or exe in HELPER_BLACKLIST:
             hits.append(ProcessHit(name=exe, pid=pid, category="hard"))
         elif include_browsers and (exe in BROWSER_BLACKLIST or exe in extra_browser):
@@ -265,11 +298,84 @@ def _list_posix(
         except ValueError:
             continue
         name = parts[1].lower().split("/")[-1]
+        if name in PROTECTED_NAMES:
+            continue
         if name in HARD_BLACKLIST or name in extra_hard or name in HELPER_BLACKLIST:
             hits.append(ProcessHit(name=name, pid=pid, category="hard"))
         elif include_browsers and (name in BROWSER_BLACKLIST or name in extra_browser):
             hits.append(ProcessHit(name=name, pid=pid, category="browser"))
     return hits
+
+
+def _process_tree(roots: set[int]) -> set[int]:
+    """Expand parent PIDs to include all descendants (Edge/Chrome multi-process)."""
+    if not roots:
+        return set()
+    children_map = _parent_child_map()
+    out = set(roots)
+    stack = list(roots)
+    while stack:
+        parent = stack.pop()
+        for child in children_map.get(parent, ()):
+            if child not in out:
+                out.add(child)
+                stack.append(child)
+    return out
+
+
+def _parent_child_map() -> dict[int, list[int]]:
+    mapping: dict[int, list[int]] = {}
+    if sys.platform != "win32":
+        return mapping
+    try:
+        out = subprocess.check_output(
+            ["wmic", "process", "get", "ProcessId,ParentProcessId", "/FORMAT:CSV"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+        )
+    except Exception:
+        return mapping
+    for line in out.splitlines():
+        parts = [p.strip().strip('"') for p in line.split(",")]
+        if len(parts) < 3:
+            continue
+        # CSV: Node,ParentProcessId,ProcessId
+        try:
+            ppid = int(parts[-2])
+            pid = int(parts[-1])
+        except ValueError:
+            continue
+        mapping.setdefault(ppid, []).append(pid)
+    return mapping
+
+
+def _pids_matching_cmdline(markers: set[str]) -> set[int]:
+    """Find PIDs whose command line contains any protected marker (exam profile dir)."""
+    import re
+
+    if not markers or sys.platform != "win32":
+        return set()
+    markers_l = [m.lower().replace("/", "\\") for m in markers]
+    matched: set[int] = set()
+    try:
+        out = subprocess.check_output(
+            ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:CSV"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+        )
+    except Exception:
+        return matched
+    for line in out.splitlines():
+        low = line.lower().replace("/", "\\")
+        if not any(m in low for m in markers_l):
+            continue
+        # CommandLine may contain commas; ProcessId is always the trailing integer.
+        m = re.search(r",(\d+)\s*$", line.strip())
+        if m:
+            matched.add(int(m.group(1)))
+    return matched
 
 
 def _terminate(pid: int) -> bool:

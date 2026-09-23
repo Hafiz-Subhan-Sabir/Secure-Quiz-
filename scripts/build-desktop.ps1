@@ -30,7 +30,11 @@ pyinstaller `
   --hidden-import mediapipe `
   --hidden-import cv2 `
   --hidden-import sklearn `
+  --hidden-import sklearn.ensemble `
+  --hidden-import sklearn.ensemble._forest `
   --collect-all mediapipe `
+  --collect-all sklearn `
+  --collect-all joblib `
   intelliQuiz_desktop/cli.py
 
 Write-Host ""

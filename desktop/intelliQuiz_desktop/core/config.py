@@ -1,20 +1,49 @@
+from __future__ import annotations
+
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_PKG = Path(__file__).resolve().parents[1]  # intelliQuiz_desktop/
-_REPO = Path(__file__).resolve().parents[3]  # Intelligence Quiz/
+
+def _pkg_dir() -> Path:
+    """Package dir (intelliQuiz_desktop/), including PyInstaller _MEIPASS."""
+    if getattr(sys, "frozen", False):
+        meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent / "_internal"))
+        return meipass / "intelliQuiz_desktop"
+    return Path(__file__).resolve().parents[1]
+
+
+def _resource_root() -> Path:
+    """Repo root in dev; PyInstaller _MEIPASS when frozen (bundled ml/, etc.)."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent / "_internal"))
+    return Path(__file__).resolve().parents[3]
+
+
+def _exe_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
+
+
+_PKG = _pkg_dir()
+_ROOT = _resource_root()
 
 
 class DesktopSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="IQ_DESKTOP_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(_exe_dir() / ".env"),
+        env_prefix="IQ_DESKTOP_",
+        extra="ignore",
+    )
 
     api_base_url: str = "http://127.0.0.1:8080/api/v1"
     api_verify_ssl: bool = False
     api_ca_cert: Path | None = None
     data_dir: Path = Path.home() / ".intelliquiz" / "desktop"
-    model_path: Path = _REPO / "ml" / "artifacts" / "models" / "best_model.joblib"
+    model_path: Path = _ROOT / "ml" / "artifacts" / "models" / "best_model.joblib"
     face_landmarker_path: Path = _PKG / "models" / "face_landmarker.task"
     # Bind 0.0.0.0 so phones on the LAN can open the mobile camera page.
     # The desktop browser still opens http://127.0.0.1:{port}/.
