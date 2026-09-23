@@ -24,3 +24,5 @@ android/.gradle/
 android/app/build/
 android/local.properties
 admin-web/dist/
+
+downloads/

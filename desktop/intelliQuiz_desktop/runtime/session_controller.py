@@ -455,10 +455,13 @@ class SessionController:
         if self.settings.exam_kiosk_mode:
             host = "127.0.0.1" if self.settings.local_ui_host in ("0.0.0.0", "::") else self.settings.local_ui_host
             url = f"http://{host}:{self.settings.local_ui_port}/"
-            if self.exam_shell.launch(url, kiosk=True):
+            # Keep the already-open app window when possible. Fullscreen kiosk
+            # relaunch was closing the only UI the student had.
+            living = self.exam_shell.process is not None and self.exam_shell.process.poll() is None
+            if living:
                 allowed.add(self.exam_shell.pid)
-            # Protect the whole exam Edge/Chrome process tree (multi-process browsers).
-            # Without this, kill_browsers=True terminates the exam UI itself.
+            elif self.exam_shell.launch(url, kiosk=False):
+                allowed.add(self.exam_shell.pid)
             self.app_lock.set_protected_cmdline_markers({str(self.exam_shell.profile_dir.resolve())})
         self.app_lock.set_allowed_pids(allowed)
         self.focus_guard.set_allowed_pids(allowed)

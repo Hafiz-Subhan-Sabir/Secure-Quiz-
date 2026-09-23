@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -68,7 +69,8 @@ HELPER_BLACKLIST = {
     "7zfm",
 }
 
-# Browsers — flagged; killed when kill_browsers is enabled (exam kiosk window is whitelisted).
+# Browsers — flagged only. Never force-killed while the exam UI itself runs in
+# Edge/Chrome (killing sibling browser processes closes the quiz window).
 BROWSER_BLACKLIST = {
     "chrome",
     "msedge",
@@ -78,11 +80,17 @@ BROWSER_BLACKLIST = {
     "iexplore",
 }
 
-# Never terminate the exam runtime itself.
+# Never terminate the exam runtime / its console host.
 PROTECTED_NAMES = {
     "intelliquizdesktop",
     "intelliquiz-desktop",
     "uvicorn",
+    "windowsterminal",
+    "openconsole",
+    "conhost",
+    "powershell",
+    "pwsh",
+    "cmd",
 }
 
 
@@ -106,11 +114,10 @@ class AppLockController:
     """Continuous process scanner + selective terminator.
 
     Conceptual model:
-    - HARD apps (chat/remote) break exam integrity → detect + kill when enabled.
-    - Browsers are cheating channels for notes/AI → flag always; kill only if
-      ``kill_browsers`` is True (kiosk / native shell). While the student UI
-      itself runs in a browser, killing browsers would kill the exam client —
-      so the exam browser profile / process tree is always protected.
+    - HARD/HELPER apps (chat/remote/notes/IDE) → detect + kill when enabled.
+    - Browsers → flag only. The student exam UI is hosted in Edge/Chrome, so
+      terminating browser PIDs closes the exam itself (especially on Windows
+      where protection via WMIC is often unavailable).
     """
 
     def __init__(
@@ -122,7 +129,8 @@ class AppLockController:
         on_violation: Callable[[list[ProcessHit], list[str]], None] | None = None,
     ) -> None:
         self.kill = kill
-        self.kill_browsers = kill_browsers
+        # Hard-disable browser killing: exam shell is Edge/Chrome today.
+        self.kill_browsers = False
         self.interval_sec = interval_sec
         self.on_violation = on_violation
         self.state = AppLockState()
@@ -153,8 +161,8 @@ class AppLockController:
         with self._lock:
             self._extra_hard = hard_names
             self._extra_browser = browser_names
-            if strictness in {"medium", "high", "lockdown"}:
-                self.kill_browsers = True
+            # Keep kill_browsers off regardless of strictness — exam UI is a browser.
+            self.kill_browsers = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -199,7 +207,8 @@ class AppLockController:
                     continue
                 if hit.name in PROTECTED_NAMES:
                     continue
-                if hit.category == "browser" and not self.kill_browsers:
+                if hit.category == "browser":
+                    # Never kill browsers — exam window is Edge/Chrome.
                     continue
                 if _terminate(hit.pid):
                     killed.append(f"{hit.name}:{hit.pid}")
@@ -222,7 +231,6 @@ class AppLockController:
         protected |= _process_tree(roots)
         if markers:
             protected |= _pids_matching_cmdline(markers)
-        # Always keep our own runtime PID
         protected.add(os.getpid())
         return protected
 
@@ -323,28 +331,48 @@ def _process_tree(roots: set[int]) -> set[int]:
     return out
 
 
-def _parent_child_map() -> dict[int, list[int]]:
-    mapping: dict[int, list[int]] = {}
+def _cim_processes() -> list[dict]:
+    """Enumerate processes via PowerShell CIM (WMIC is removed on many Win11 installs)."""
     if sys.platform != "win32":
-        return mapping
+        return []
+    ps = (
+        "Get-CimInstance Win32_Process | "
+        "Select-Object ProcessId,ParentProcessId,CommandLine | "
+        "ConvertTo-Json -Compress"
+    )
     try:
         out = subprocess.check_output(
-            ["wmic", "process", "get", "ProcessId,ParentProcessId", "/FORMAT:CSV"],
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             text=True,
             stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            timeout=8,
         )
     except Exception:
-        return mapping
-    for line in out.splitlines():
-        parts = [p.strip().strip('"') for p in line.split(",")]
-        if len(parts) < 3:
-            continue
-        # CSV: Node,ParentProcessId,ProcessId
+        return []
+    out = (out or "").strip()
+    if not out:
+        return []
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict):
+        return [data]
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _parent_child_map() -> dict[int, list[int]]:
+    mapping: dict[int, list[int]] = {}
+    for row in _cim_processes():
         try:
-            ppid = int(parts[-2])
-            pid = int(parts[-1])
-        except ValueError:
+            pid = int(row.get("ProcessId") or 0)
+            ppid = int(row.get("ParentProcessId") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pid <= 0:
             continue
         mapping.setdefault(ppid, []).append(pid)
     return mapping
@@ -352,30 +380,19 @@ def _parent_child_map() -> dict[int, list[int]]:
 
 def _pids_matching_cmdline(markers: set[str]) -> set[int]:
     """Find PIDs whose command line contains any protected marker (exam profile dir)."""
-    import re
-
     if not markers or sys.platform != "win32":
         return set()
     markers_l = [m.lower().replace("/", "\\") for m in markers]
     matched: set[int] = set()
-    try:
-        out = subprocess.check_output(
-            ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:CSV"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
-        )
-    except Exception:
-        return matched
-    for line in out.splitlines():
-        low = line.lower().replace("/", "\\")
-        if not any(m in low for m in markers_l):
+    for row in _cim_processes():
+        cmd = str(row.get("CommandLine") or "").lower().replace("/", "\\")
+        if not cmd or not any(m in cmd for m in markers_l):
             continue
-        # CommandLine may contain commas; ProcessId is always the trailing integer.
-        m = re.search(r",(\d+)\s*$", line.strip())
-        if m:
-            matched.add(int(m.group(1)))
-    return matched
+        try:
+            matched.add(int(row.get("ProcessId") or 0))
+        except (TypeError, ValueError):
+            continue
+    return {p for p in matched if p > 0}
 
 
 def _terminate(pid: int) -> bool:
