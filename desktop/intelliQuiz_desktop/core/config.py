@@ -63,6 +63,8 @@ class DesktopSettings(BaseSettings):
     app_lock_kill: bool = True
     app_lock_kill_browsers: bool = False
     exam_kiosk_mode: bool = True
+    # Always require a paired phone camera during exams (even if PC has a webcam).
+    require_android_camera_always: bool = True
     identity_match_threshold: float = 0.88
     focus_loss_pause_sec: float = 3.0
     camera_index: int = 0

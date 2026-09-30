@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import traceback
 import webbrowser
 from pathlib import Path
 
@@ -13,6 +15,34 @@ from intelliQuiz_desktop.pairing.qr import build_pairing_payload, pairing_qr_jso
 from intelliQuiz_desktop.storage.event_store import EncryptedEventStore
 from intelliQuiz_desktop.sync.api_client import ApiClient
 from intelliQuiz_desktop.sync.worker import SyncWorker
+
+
+def _bootstrap_frozen() -> None:
+    """Make double-click launches reliable (cwd + bundle checks)."""
+    if not getattr(sys, "frozen", False):
+        return
+    exe_dir = Path(sys.executable).resolve().parent
+    try:
+        os.chdir(exe_dir)
+    except OSError:
+        pass
+    internal = exe_dir / "_internal"
+    if not internal.is_dir():
+        print("ERROR: Missing _internal folder next to IntelliQuizDesktop.exe")
+        print("Unzip the FULL IntelliQuizDesktop folder — do not run only the .exe file.")
+        _pause_on_error()
+        raise SystemExit(1)
+
+
+def _pause_on_error() -> None:
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        input("\nPress Enter to close this window...")
+    except Exception:
+        import time
+
+        time.sleep(20)
 
 
 def cmd_smoke(args: argparse.Namespace) -> int:
@@ -168,6 +198,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    _bootstrap_frozen()
     parser = argparse.ArgumentParser(prog="intelliquiz-desktop")
     sub = parser.add_subparsers(dest="cmd", required=False)
 
@@ -188,8 +219,19 @@ def main() -> None:
     if not argv or argv[0].startswith("-"):
         argv = ["run", *argv]
 
-    args = parser.parse_args(argv)
-    raise SystemExit(args.func(args))
+    try:
+        args = parser.parse_args(argv)
+        raise SystemExit(args.func(args))
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+        if code != 0:
+            _pause_on_error()
+        raise
+    except Exception:
+        print("\nFATAL: IntelliQuiz failed to start.\n")
+        traceback.print_exc()
+        _pause_on_error()
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

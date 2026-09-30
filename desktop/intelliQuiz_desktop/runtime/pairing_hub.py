@@ -336,13 +336,25 @@ class PairingHub:
 
         if msg_type == "env_anomaly":
             severity = float(data.get("severity", 0.7))
+            label = str(data.get("gesture_label") or "ENV")
+            plain = str(
+                data.get("plain_language")
+                or "Phone camera saw unexpected room activity."
+            )
+            image = data.get("image_data_uri")
+            if not image and self._latest_jpeg:
+                image = (
+                    "data:image/jpeg;base64,"
+                    + base64.b64encode(self._latest_jpeg).decode("ascii")
+                )
             payload = {
                 "source": "android_camera",
-                "plain_language": data.get("plain_language")
-                or "Phone camera saw unexpected room activity.",
-                "gesture_label": data.get("gesture_label") or "ENV",
-                "image_data_uri": data.get("image_data_uri"),
+                "plain_language": plain,
+                "gesture_label": label,
+                "image_data_uri": image,
                 "capture_reason": "android_env_anomaly",
+                "cheating_attempt": label in {"PHONE_APP_SWITCH", "PHONE_HELPER", "APP_SWITCH"}
+                or severity >= 0.8,
             }
             with self._lock:
                 self.state.last_android_message = payload["plain_language"]

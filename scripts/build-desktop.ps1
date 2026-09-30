@@ -41,5 +41,25 @@ Write-Host ""
 Write-Host "Build complete:"
 Write-Host "  $Dist\IntelliQuizDesktop\IntelliQuizDesktop.exe"
 Write-Host ""
+
+# Friendly launcher so students don't run a lone .exe without _internal
+$LaunchSrc = Join-Path $Root "scripts\Launch-IntelliQuiz.bat"
+$LaunchDst = Join-Path $Dist "IntelliQuizDesktop\Launch IntelliQuiz.bat"
+if (Test-Path $LaunchSrc) {
+  Copy-Item $LaunchSrc $LaunchDst -Force
+  Write-Host "Launcher: $LaunchDst"
+}
+
+$Readme = @"
+IntelliQuiz Desktop
+===================
+1. Unzip this WHOLE folder (keep _internal next to the .exe).
+2. Double-click "Launch IntelliQuiz.bat" (recommended), or IntelliQuizDesktop.exe.
+3. Keep the console window open during the exam.
+4. Optional: create a .env file here with:
+   IQ_DESKTOP_API_BASE_URL=http://YOUR-SERVER:8080/api/v1
+"@
+Set-Content -Path (Join-Path $Dist "IntelliQuizDesktop\README.txt") -Value $Readme -Encoding UTF8
+
 Write-Host "Zip the IntelliQuizDesktop folder and share with students."
 Write-Host "Set IQ_DESKTOP_API_BASE_URL to your server before running."

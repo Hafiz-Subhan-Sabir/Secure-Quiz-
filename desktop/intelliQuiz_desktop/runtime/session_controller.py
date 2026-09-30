@@ -318,6 +318,10 @@ class SessionController:
         else:
             require_android = False
 
+        # Phone is always required as a secondary camera, even when PC has a webcam.
+        if self.settings.require_android_camera_always:
+            require_android = True
+
         with self._lock:
             self.state.exam_id = exam_id
             self.state.exam_title = paper.get("title") or ""
@@ -363,10 +367,17 @@ class SessionController:
         return {"ok": True, "phase": "camera_setup", "pairing": self.pairing.status()}
 
     def confirm_camera(self, *, prefer_phone: bool = False) -> dict[str, Any]:
-        """Hard gate: PC webcam with one face, or paired phone camera."""
+        """Hard gate: identity camera OK, and phone must stay paired as secondary camera."""
         mon = self.monitor.status()
         pair = self.pairing.status()
         paired = bool(pair.get("paired") or self.state.android_paired)
+
+        # Phone is mandatory even when the PC webcam is used for face identity.
+        if self.settings.require_android_camera_always and not paired:
+            raise RuntimeError(
+                "Phone camera must be paired before starting. Scan the QR with your phone "
+                "and keep the IntelliQuiz camera app open during the exam."
+            )
 
         if prefer_phone or (not mon.get("camera_ok") and paired):
             if not paired:
@@ -410,12 +421,19 @@ class SessionController:
         with self._lock:
             self.state.face_verified = True
             self.state.identity_source = "webcam"
+            self.state.android_paired = paired
             self.state.phase = "camera_setup"
             self.state.error = ""
         self._append(
             "heartbeat",
             0.0,
-            {"source": "confirm_camera", "identity_source": "webcam", "face_count": mon.get("face_count"), "identity_score": score},
+            {
+                "source": "confirm_camera",
+                "identity_source": "webcam",
+                "face_count": mon.get("face_count"),
+                "identity_score": score,
+                "android_paired": paired,
+            },
         )
         return {
             "ok": True,
@@ -427,7 +445,7 @@ class SessionController:
 
     def enter_exam(self, *, require_pair: bool | None = None) -> dict[str, Any]:
         if require_pair is None:
-            require_pair = self.state.require_android_camera
+            require_pair = self.state.require_android_camera or self.settings.require_android_camera_always
         status = self.pairing.status()
         paired = bool(status.get("paired") or self.state.android_paired)
 
@@ -792,20 +810,63 @@ class SessionController:
         return _flush()
 
     def _on_integrity_event(self, typ: str, severity: float, payload: dict[str, Any]) -> None:
-        self._append(typ, severity, payload)
+        enriched = dict(payload)
+        label = str(enriched.get("gesture_label") or "")
+        # Phone left the exam camera app — attach PC screen snapshot for admin review.
+        if label in {"PHONE_APP_SWITCH", "PHONE_HELPER", "APP_SWITCH"} or typ == "android_env_anomaly":
+            if not enriched.get("screen_image_data_uri"):
+                try:
+                    from intelliQuiz_desktop.runtime.evidence import capture_screen_data_uri
+
+                    screen = capture_screen_data_uri()
+                    if screen:
+                        enriched["screen_image_data_uri"] = screen
+                except Exception:
+                    pass
+            if not enriched.get("image_data_uri"):
+                jpeg = self.pairing.latest_jpeg()
+                if jpeg:
+                    import base64
+
+                    enriched["image_data_uri"] = (
+                        "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
+                    )
+            enriched.setdefault(
+                "plain_language",
+                "Student left the IntelliQuiz phone camera app (possible helper app). "
+                "Marked as a cheating attempt for admin review.",
+            )
+            enriched.setdefault("cheating_attempt", True)
+            enriched.setdefault("flag", "phone_helper_app")
+            if self.state.phase == "exam" and severity >= 0.75:
+                with self._lock:
+                    self.state.quiz_paused = True
+                    self.state.pause_reason = (
+                        "Exam paused — keep the IntelliQuiz camera app open on your phone. "
+                        "Do not open other apps during the exam."
+                    )
+        self._append(typ, severity, enriched)
 
     def _on_paired(self) -> None:
         with self._lock:
             self.state.android_paired = True
-            if self.state.phase == "exam" and self.state.identity_source == "phone":
-                self.state.quiz_paused = False
-                self.state.pause_reason = ""
+            if self.state.phase == "exam":
+                # Resume when phone returns, unless another pause reason is active.
+                if "phone" in (self.state.pause_reason or "").lower() or "IntelliQuiz camera" in (
+                    self.state.pause_reason or ""
+                ):
+                    self.state.quiz_paused = False
+                    self.state.pause_reason = ""
         self._append("heartbeat", 0.0, {"source": "android_paired", "android_paired": True})
 
     def _on_unpaired(self) -> None:
         with self._lock:
             self.state.android_paired = False
-            if self.state.phase == "exam" and self.state.identity_source == "phone":
+            if self.state.phase == "exam" and (
+                self.settings.require_android_camera_always
+                or self.state.require_android_camera
+                or self.state.identity_source == "phone"
+            ):
                 self.state.quiz_paused = True
                 self.state.pause_reason = (
                     "Phone camera disconnected. Scan the QR again and allow camera access to continue."
@@ -817,6 +878,7 @@ class SessionController:
                 "source": "android_camera",
                 "plain_language": "Phone camera disconnected during the exam.",
                 "gesture_label": "PHONE_LOST",
+                "cheating_attempt": True,
             },
         )
 
@@ -826,16 +888,27 @@ class SessionController:
             if self.state.phase != "exam":
                 return
             source = self.state.identity_source
+            require_phone = self.settings.require_android_camera_always or self.state.require_android_camera
+
+        pair = self.pairing.status()
+        phone_ok = bool(pair.get("paired") and (pair.get("camera_live") or pair.get("android_frames", 0) > 0))
+        if not pair.get("paired"):
+            phone_ok = False
+
+        # Phone secondary camera is mandatory for all exams when configured.
+        if require_phone and not phone_ok:
+            with self._lock:
+                self.state.quiz_paused = True
+                self.state.android_paired = False
+                self.state.pause_reason = (
+                    "Phone camera is required. Open the IntelliQuiz app on your phone, "
+                    "keep the camera page open, and wait until it says Paired."
+                )
+            return
 
         if source == "phone":
-            pair = self.pairing.status()
-            # Accept grace-period pairing (recent frames) even if socket briefly drops
-            ok = bool(pair.get("paired") and (pair.get("camera_live") or pair.get("android_frames", 0) > 0))
-            # If hard-expired unpaired, pause
-            if not pair.get("paired"):
-                ok = False
             with self._lock:
-                if not ok:
+                if not phone_ok:
                     self.state.quiz_paused = True
                     self.state.android_paired = False
                     self.state.pause_reason = (
@@ -848,7 +921,7 @@ class SessionController:
                     self.state.pause_reason = ""
             return
 
-        # Webcam identity (default)
+        # Webcam identity (phone may still be paired as secondary)
         mon = self.monitor.status()
         ok = bool(mon.get("camera_ok"))
         with self._lock:
@@ -857,9 +930,11 @@ class SessionController:
                 self.state.pause_reason = (
                     "PC webcam was lost. Plug it back in / allow camera access, then continue."
                 )
-            elif self.state.identity_source != "phone":
+            else:
                 self.state.quiz_paused = False
                 self.state.pause_reason = ""
+                if phone_ok:
+                    self.state.android_paired = True
 
     def _flush_pending_sync(self) -> None:
         try:

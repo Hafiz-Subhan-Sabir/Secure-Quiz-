@@ -539,24 +539,24 @@
             <div>
               <div id="panel-webcam">
                 <h1>Look at the camera</h1>
-                <p class="lead">Center your face. When one face is detected, the button below turns green and you can continue.</p>
+                <p class="lead">Center your face on the PC webcam. <strong>You must also pair your phone</strong> — keep the IntelliQuiz camera app open during the exam.</p>
                 <div class="cam" id="faceCam">
                   <div class="placeholder" id="camPlaceholder">Starting webcam…</div>
                   <img id="faceImg" alt="Webcam preview" />
                   <span class="label">PC webcam</span>
                 </div>
-                <button type="button" class="linkish" id="btnSwitchPhone">No webcam? Use your phone instead →</button>
+                <button type="button" class="linkish" id="btnSwitchPhone">Show phone QR (required) →</button>
               </div>
 
               <div id="panel-phone" class="hidden">
-                <h1>Scan with your phone</h1>
-                <p class="lead">Same Wi‑Fi as this PC. The QR opens your phone camera and pairs it automatically.</p>
+                <h1>Pair your phone (required)</h1>
+                <p class="lead">Even with a PC webcam, your phone must stay linked. Same Wi‑Fi as this PC. Keep the IntelliQuiz app open — opening other apps is flagged as cheating.</p>
                 <div class="qr-box"><img id="qrImg" alt="Phone camera QR" /></div>
                 <p class="note" style="margin:0 0 0.25rem"><strong>Scan this QR</strong> — opens an <strong>https://</strong> phone page (required for camera).</p>
                 <div class="url-box" id="qrUrlBox">Generating phone camera link…</div>
                 <button type="button" class="ghost" id="btnCopyUrl" style="margin-bottom:0.5rem">Copy phone link</button>
                 <p class="note" id="qrEndpoint">Phone must be on the <strong>same router</strong> as this PC (Wi‑Fi + Ethernet is fine). Guest Wi‑Fi often blocks this.</p>
-                <button type="button" class="linkish" id="btnSwitchWebcam">Try PC webcam instead →</button>
+                <button type="button" class="linkish" id="btnSwitchWebcam">Back to PC webcam check →</button>
                 <details style="margin-top:0.75rem">
                   <summary class="note" style="cursor:pointer">Lab / demo without a phone</summary>
                   <button class="ghost" type="button" id="btnLabPair" style="margin-top:0.5rem">Mark phone paired (lab)</button>
@@ -927,9 +927,10 @@
         const mon = st.monitor || {};
         const pair = st.pairing || {};
         const paired = !!(st.android_paired || pair.paired);
+        // Phone is always required, even when PC webcam is used for face identity.
         if (setupMode === "phone") return { ready: paired, preferPhone: true };
         const camOk = !!mon.camera_ok && mon.face_count === 1;
-        return { ready: camOk, preferPhone: false };
+        return { ready: camOk && paired, preferPhone: false, phoneMissing: camOk && !paired };
       }
 
       function syncFooter() {
@@ -978,21 +979,25 @@
           if (setupMode === "webcam") {
             if (g.ready) {
               hint.classList.add("ok-text");
-              hint.innerHTML = "<strong>Ready!</strong> Face check passed — continue to the quiz.";
+              hint.innerHTML = "<strong>Ready!</strong> Face check + phone paired — continue to the quiz.";
               primary.textContent = "Start quiz →";
               primary.disabled = false;
               primary.classList.add("ready");
             } else {
               const mon = (lastStatus && lastStatus.monitor) || {};
-              if (mon.camera_ok) {
-                hint.innerHTML = "<strong>Next:</strong> Center one face in the camera, then this button unlocks.";
+              if (g.phoneMissing) {
+                hint.innerHTML = "<strong>Phone required.</strong> Scan the QR on your phone and keep IntelliQuiz open.";
+                primary.textContent = "Waiting for phone…";
+              } else if (mon.camera_ok) {
+                hint.innerHTML = "<strong>Next:</strong> Center one face, then pair your phone (required).";
+                primary.textContent = "Waiting for face + phone…";
               } else {
-                hint.innerHTML = "<strong>No PC webcam found.</strong> Use your phone — tap below or wait, we switch automatically.";
+                hint.innerHTML = "<strong>No PC webcam found.</strong> Pair your phone camera to continue.";
+                primary.textContent = "Waiting for camera…";
               }
-              primary.textContent = "Waiting for face…";
               primary.disabled = true;
               secondary.classList.remove("hidden");
-              secondary.textContent = "Use phone camera instead";
+              secondary.textContent = "Show phone QR (required)";
             }
           } else {
             if (g.ready) {

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -29,12 +30,17 @@ import org.json.JSONObject
  *
  * Desktop QR encodes https://LAN:8767/phone?... — scan or open deep link,
  * connect Desktop WS bridge, then load the phone camera WebView.
+ *
+ * Leaving this app during a paired exam (opening ChatGPT, WhatsApp, etc.)
+ * reports a cheating attempt to desktop → admin evidence.
  */
 class MainActivity : AppCompatActivity() {
     private var webView: WebView? = null
     private var pendingUrl: String? = null
     private var bridge: DesktopBridge? = null
     private val envMonitor = EnvironmentalMonitor()
+    private var examCameraActive = false
+    private var lastAppSwitchReportAt = 0L
 
     private val cameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -67,6 +73,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val url = resolvePhoneUrl(intent)
         if (url != null) {
             PairingPayload.tryParseQrText(url)?.let { connectBridge(it) }
@@ -85,6 +92,49 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Student left IntelliQuiz (opened another app / home screen) while paired.
+        if (examCameraActive && envMonitor.paired) {
+            reportPhoneAppSwitch()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (examCameraActive && envMonitor.paired) {
+            val alive = JSONObject()
+                .put("type", "camera_alive")
+                .put("source", "android_native")
+            try {
+                bridge?.send(alive.toString())
+            } catch (_: Exception) {
+                /* ignore */
+            }
+        }
+    }
+
+    private fun reportPhoneAppSwitch() {
+        val now = System.currentTimeMillis()
+        if (now - lastAppSwitchReportAt < 8_000L) return
+        lastAppSwitchReportAt = now
+        val payload = JSONObject()
+            .put("type", "env_anomaly")
+            .put("severity", 0.92)
+            .put("gesture_label", "PHONE_APP_SWITCH")
+            .put(
+                "plain_language",
+                "Student left the IntelliQuiz phone camera app and opened another app. " +
+                    "Flagged as a cheating attempt — phone snapshot and PC screen saved for admin.",
+            )
+            .put("source", "android_native")
+        try {
+            bridge?.send(payload.toString())
+        } catch (_: Exception) {
+            /* ignore */
+        }
+    }
+
     private fun ensureCameraThenOpen(url: String) {
         pendingUrl = url
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
@@ -97,6 +147,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showInstructions(extra: String?) {
+        examCameraActive = false
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
@@ -184,6 +235,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun openCameraWebView(url: String) {
+        examCameraActive = true
         val wv = WebView(this)
         webView = wv
         val settings: WebSettings = wv.settings
@@ -201,6 +253,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        examCameraActive = false
         envMonitor.stop()
         bridge?.close()
         bridge = null
