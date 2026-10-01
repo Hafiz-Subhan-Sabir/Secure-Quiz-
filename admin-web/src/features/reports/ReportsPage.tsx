@@ -83,6 +83,34 @@ export function ReportsPage() {
 
       {report ? (
         <>
+          {pct >= 40 || report.flags.length > 0 || report.evidence.length > 0 ? (
+            <section
+              className="panel"
+              style={{
+                marginBottom: "1rem",
+                borderColor: "rgba(180, 35, 24, 0.35)",
+                background: "rgba(180, 35, 24, 0.06)",
+              }}
+            >
+              <h2 style={{ color: "var(--danger)", marginTop: 0 }}>
+                🚨 Cheating review needed
+              </h2>
+              <p className="summary-plain" style={{ marginBottom: "0.5rem" }}>
+                {report.summary_plain}
+              </p>
+              <p className="status">
+                Risk <strong>{pct}%</strong>
+                {report.flags.length ? ` · Flags: ${report.flags.join(", ")}` : ""}
+                {report.evidence.length ? ` · ${report.evidence.length} evidence photo(s)` : ""}
+              </p>
+            </section>
+          ) : (
+            <section className="panel" style={{ marginBottom: "1rem" }}>
+              <h2 style={{ marginTop: 0 }}>Looks clean</h2>
+              <p className="status">No strong cheating signals on this attempt.</p>
+            </section>
+          )}
+
           <section className="panel report-hero">
             <div>
               <p className="eyebrow">Student</p>

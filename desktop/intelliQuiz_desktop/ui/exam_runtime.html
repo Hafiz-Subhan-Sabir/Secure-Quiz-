@@ -1221,12 +1221,30 @@
           camFailStreak = 0;
         }
 
-        if (phase === "exam" && mon.last_risk >= 0.55 && mon.message) {
-          $("liveAlert").textContent = mon.message + " — a photo was saved for review.";
-          $("liveAlert").classList.remove("hidden");
-          $("examCam").classList.remove("flash");
-          void $("examCam").offsetWidth;
-          $("examCam").classList.add("flash");
+        if (phase === "exam") {
+          const alertEl = $("liveAlert");
+          if (st.quiz_paused && st.pause_reason) {
+            alertEl.textContent = "⏸ EXAM PAUSED: " + st.pause_reason;
+            alertEl.classList.remove("hidden");
+            alertEl.style.background = "#ffe8e6";
+            alertEl.style.borderColor = "#ff7b72";
+          } else if (st.student_alert) {
+            alertEl.textContent = st.student_alert;
+            alertEl.classList.remove("hidden");
+            alertEl.style.background = "#fff4e0";
+            alertEl.style.borderColor = "#f0a020";
+          } else if (mon.looking_away || (mon.last_risk >= 0.4 && mon.message)) {
+            alertEl.textContent =
+              "⚠ " + (mon.message || "Face/gaze rule broken") + " — a photo was saved for admin review.";
+            alertEl.classList.remove("hidden");
+            alertEl.style.background = "#fff4e0";
+            alertEl.style.borderColor = "#f0a020";
+            $("examCam").classList.remove("flash");
+            void $("examCam").offsetWidth;
+            $("examCam").classList.add("flash");
+          } else {
+            alertEl.classList.add("hidden");
+          }
         }
         if (st.exam_title) $("topMeta").textContent = `${st.exam_title} · ${st.phase}`;
       }

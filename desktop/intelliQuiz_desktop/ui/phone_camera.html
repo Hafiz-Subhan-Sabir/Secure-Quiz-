@@ -289,10 +289,78 @@
         }, 2000);
       }
 
+      let lastMotionSample = null;
+      let lastMotionAlertAt = 0;
+
+      function sampleMotion() {
+        if (!paired || !stream) return;
+        const video = $("preview");
+        const canvas = $("snap");
+        if (!video.videoWidth) return;
+        const ctx = canvas.getContext("2d");
+        const w = 80;
+        const h = 60;
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(video, 0, 0, w, h);
+        const data = ctx.getImageData(0, 0, w, h).data;
+        let sum = 0;
+        const gray = new Float32Array(w * h);
+        for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+          const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          gray[p] = g;
+          sum += g;
+        }
+        const avg = sum / gray.length;
+        // Covered / black / white camera
+        if (avg < 18 || avg > 245) {
+          const now = Date.now();
+          if (now - lastMotionAlertAt > 8000) {
+            lastMotionAlertAt = now;
+            sendJson({
+              type: "env_anomaly",
+              severity: 0.88,
+              gesture_label: "PHONE_MOTION",
+              plain_language:
+                "Phone camera looks covered or pointing away (too dark/bright). Cheating attempt logged.",
+            });
+            setBanner("Keep camera on the room — do not cover or flip away", "err");
+          }
+          lastMotionSample = gray;
+          return;
+        }
+        if (lastMotionSample && lastMotionSample.length === gray.length) {
+          let diff = 0;
+          for (let i = 0; i < gray.length; i++) diff += Math.abs(gray[i] - lastMotionSample[i]);
+          const score = diff / gray.length;
+          if (score > 28) {
+            const now = Date.now();
+            if (now - lastMotionAlertAt > 8000) {
+              lastMotionAlertAt = now;
+              sendJson({
+                type: "env_anomaly",
+                severity: 0.82,
+                gesture_label: "PHONE_MOTION",
+                plain_language:
+                  "Phone camera moved suddenly during the exam. Cheating attempt logged for admin.",
+              });
+              setBanner("Phone moved — keep it steady facing the room", "err");
+            }
+          }
+        }
+        lastMotionSample = gray;
+      }
+
       document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-          // Keep alive while backgrounded briefly; if camera stops, track.onended fires.
-          sendJson({ type: "camera_alive" });
+        if (document.hidden && paired) {
+          sendJson({
+            type: "env_anomaly",
+            severity: 0.92,
+            gesture_label: "PHONE_APP_SWITCH",
+            plain_language:
+              "Student left the phone camera page (opened another app or locked screen). Cheating attempt logged.",
+          });
+          setBanner("Do not leave this page during the exam", "err");
         }
       });
 
@@ -305,6 +373,9 @@
         facing = facing === "environment" ? "user" : "environment";
         await startCamera();
       };
+
+      // Motion check while paired
+      setInterval(sampleMotion, 1500);
 
       if (sessionId && token && wsUrl) {
         startCamera();

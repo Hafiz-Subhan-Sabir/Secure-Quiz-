@@ -56,12 +56,12 @@ class DesktopSettings(BaseSettings):
     sync_batch_size: int = 100
     heartbeat_interval_sec: int = 15
     monitor_fps: float = 4.0
-    gesture_capture_threshold: float = 0.5
-    capture_cooldown_sec: float = 6.0
+    gesture_capture_threshold: float = 0.4
+    capture_cooldown_sec: float = 3.0
     # Kill chat/remote tools during exam. Browsers are flagged but not killed
     # while the exam UI runs in a browser (production would use kiosk WebView).
     app_lock_kill: bool = True
-    app_lock_kill_browsers: bool = False
+    app_lock_kill_browsers: bool = True
     exam_kiosk_mode: bool = True
     # Always require a paired phone camera during exams (even if PC has a webcam).
     require_android_camera_always: bool = True

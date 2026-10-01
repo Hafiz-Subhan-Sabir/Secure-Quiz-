@@ -151,9 +151,10 @@ class AppLockController:
         """Protect browser processes whose command line contains these substrings."""
         with self._lock:
             self._protected_markers = {m for m in markers if m}
-            # Enable browser kill only after exam profile is known (keeps exam UI alive).
-            if self._want_kill_browsers and self._protected_markers:
+            # Once exam profile is known, always kill other Chrome/Edge instances.
+            if self._protected_markers:
                 self.kill_browsers = True
+                self._want_kill_browsers = True
 
     def apply_profile(self, *, blacklist_csv: str, strictness: str) -> None:
         """Merge server proctoring blacklist into the scanner."""
@@ -163,8 +164,26 @@ class AppLockController:
         with self._lock:
             self._extra_hard = hard_names
             self._extra_browser = browser_names
-            self._want_kill_browsers = strictness in {"medium", "high", "lockdown"}
-            self.kill_browsers = bool(self._want_kill_browsers and self._protected_markers)
+            # Always intend to kill non-exam browsers during any proctored exam.
+            self._want_kill_browsers = True
+            self.kill_browsers = bool(self._protected_markers)
+
+    def force_clear_other_browsers(self) -> list[str]:
+        """Immediately terminate Chrome/Edge PIDs that are not the exam profile."""
+        with self._lock:
+            self.kill_browsers = True
+            self._want_kill_browsers = True
+        hits = self.scan_once()
+        killed: list[str] = []
+        protected = self._protected_pids()
+        for hit in hits:
+            if hit.category != "browser":
+                continue
+            if hit.pid in protected or hit.name in PROTECTED_NAMES:
+                continue
+            if _terminate(hit.pid):
+                killed.append(f"{hit.name}:{hit.pid}")
+        return killed
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():

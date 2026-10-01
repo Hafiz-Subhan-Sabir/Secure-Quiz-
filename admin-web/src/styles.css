@@ -702,20 +702,22 @@ button {
   animation: rise 420ms var(--ease) both;
 }
 
-.attempt-card.is-flagged {
-  border-color: rgba(180, 35, 24, 0.28);
-  box-shadow: inset 3px 0 0 var(--danger);
-}
-
 .flag-banner {
   margin: 0;
-  padding: 0.55rem 0.7rem;
+  padding: 0.7rem 0.85rem;
   border-radius: 10px;
-  background: rgba(180, 35, 24, 0.08);
+  background: rgba(180, 35, 24, 0.12);
   color: var(--danger);
-  font-size: 0.86rem;
-  font-weight: 600;
-  line-height: 1.35;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.4;
+  border: 1px solid rgba(180, 35, 24, 0.25);
+}
+
+.attempt-card.is-flagged {
+  border-color: rgba(180, 35, 24, 0.4);
+  box-shadow: inset 4px 0 0 var(--danger), 0 8px 24px rgba(180, 35, 24, 0.08);
+  background: linear-gradient(180deg, rgba(180, 35, 24, 0.04), transparent 40%);
 }
 
 .attempt-top {

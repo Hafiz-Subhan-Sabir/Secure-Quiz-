@@ -78,11 +78,16 @@ export function AttemptsPage() {
               <p className="attempt-exam">{a.exam_title}</p>
               {a.flagged ? (
                 <p className="flag-banner">
+                  🚨 CHEATING SUSPECTED —{" "}
                   {a.evidence_count > 0
-                    ? `${a.evidence_count} photo(s) captured when rules were broken`
-                    : "Elevated integrity risk — open the report"}
+                    ? `${a.evidence_count} photo(s) / screen captures when rules were broken`
+                    : "Elevated integrity risk — open the report now"}
                 </p>
-              ) : null}
+              ) : (
+                <p className="status" style={{ marginTop: "0.35rem" }}>
+                  No major flags yet
+                </p>
+              )}
               <dl className="attempt-meta">
                 <div>
                   <dt>Started</dt>

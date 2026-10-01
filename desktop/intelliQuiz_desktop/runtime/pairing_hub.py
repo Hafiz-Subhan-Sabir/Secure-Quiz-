@@ -353,7 +353,8 @@ class PairingHub:
                 "gesture_label": label,
                 "image_data_uri": image,
                 "capture_reason": "android_env_anomaly",
-                "cheating_attempt": label in {"PHONE_APP_SWITCH", "PHONE_HELPER", "APP_SWITCH"}
+                "cheating_attempt": label
+                in {"PHONE_APP_SWITCH", "PHONE_HELPER", "APP_SWITCH", "PHONE_MOTION"}
                 or severity >= 0.8,
             }
             with self._lock:

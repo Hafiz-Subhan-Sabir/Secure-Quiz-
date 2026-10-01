@@ -45,6 +45,7 @@ class SessionState:
     identity_source: str = ""  # webcam | phone
     quiz_paused: bool = False
     pause_reason: str = ""
+    student_alert: str = ""
     require_android_camera: bool = False
     last_result: dict[str, Any] | None = None
 
@@ -470,23 +471,26 @@ class SessionController:
             raise RuntimeError("Phone camera must be paired before starting the quiz")
 
         allowed = {os.getpid()}
-        if self.settings.exam_kiosk_mode:
-            host = "127.0.0.1" if self.settings.local_ui_host in ("0.0.0.0", "::") else self.settings.local_ui_host
-            url = f"http://{host}:{self.settings.local_ui_port}/"
-            # Keep the already-open app window when possible. Fullscreen kiosk
-            # relaunch was closing the only UI the student had.
-            living = self.exam_shell.process is not None and self.exam_shell.process.poll() is None
-            if living:
-                allowed.add(self.exam_shell.pid)
-            elif self.exam_shell.launch(url, kiosk=False):
-                allowed.add(self.exam_shell.pid)
-            self.app_lock.set_protected_cmdline_markers({str(self.exam_shell.profile_dir.resolve())})
+        host = "127.0.0.1" if self.settings.local_ui_host in ("0.0.0.0", "::") else self.settings.local_ui_host
+        url = f"http://{host}:{self.settings.local_ui_port}/"
+        # Reuse the single exam window — never open a second quiz window.
+        living = self.exam_shell.process is not None and self.exam_shell.process.poll() is None
+        if not living:
+            self.exam_shell.launch(url, kiosk=False)
+        if self.exam_shell.pid:
+            allowed.add(self.exam_shell.pid)
+        marker = str(self.exam_shell.profile_dir.resolve())
+        self.app_lock.set_protected_cmdline_markers({marker})
         self.app_lock.set_allowed_pids(allowed)
         self.focus_guard.set_allowed_pids(allowed)
+
+        # Close other Chrome/Edge profiles immediately; keep exam profile only.
+        killed_browsers = self.app_lock.force_clear_other_browsers()
 
         self.app_lock.start()
         self.focus_guard.start()
         hits, killed = self.app_lock.enforce_once()
+        killed = list(killed) + list(killed_browsers)
         if any(h.category == "hard" for h in hits) and not killed:
             pass
         with self._lock:
@@ -494,6 +498,9 @@ class SessionController:
             self.state.android_paired = paired
             self.state.quiz_paused = False
             self.state.pause_reason = ""
+            self.state.student_alert = (
+                "Exam started. Keep this window open. Do not open Chrome, Edge, or helper apps."
+            )
         self._start_heartbeat()
         self._append(
             "heartbeat",
@@ -513,6 +520,7 @@ class SessionController:
             "identity_source": self.state.identity_source,
             "app_lock": self.app_lock.snapshot(),
             "monitor": self.monitor.status(),
+            "student_alert": self.state.student_alert,
         }
 
     def save_answer(self, question_id: str, choice_index: int) -> dict[str, Any]:
@@ -673,6 +681,7 @@ class SessionController:
                 "identity_source": st.identity_source,
                 "quiz_paused": st.quiz_paused,
                 "pause_reason": st.pause_reason,
+                "student_alert": st.student_alert,
                 "answers": dict(st.answers),
                 "error": st.error,
                 "started_at": st.started_at,
@@ -812,8 +821,12 @@ class SessionController:
     def _on_integrity_event(self, typ: str, severity: float, payload: dict[str, Any]) -> None:
         enriched = dict(payload)
         label = str(enriched.get("gesture_label") or "")
+        plain = str(
+            enriched.get("plain_language")
+            or "Suspicious activity detected."
+        )
         # Phone left the exam camera app — attach PC screen snapshot for admin review.
-        if label in {"PHONE_APP_SWITCH", "PHONE_HELPER", "APP_SWITCH"} or typ == "android_env_anomaly":
+        if label in {"PHONE_APP_SWITCH", "PHONE_HELPER", "APP_SWITCH", "PHONE_MOTION"} or typ == "android_env_anomaly":
             if not enriched.get("screen_image_data_uri"):
                 try:
                     from intelliQuiz_desktop.runtime.evidence import capture_screen_data_uri
@@ -833,18 +846,20 @@ class SessionController:
                     )
             enriched.setdefault(
                 "plain_language",
-                "Student left the IntelliQuiz phone camera app (possible helper app). "
+                "Student phone camera issue (moved away / switched app). "
                 "Marked as a cheating attempt for admin review.",
             )
             enriched.setdefault("cheating_attempt", True)
             enriched.setdefault("flag", "phone_helper_app")
-            if self.state.phase == "exam" and severity >= 0.75:
+            plain = str(enriched["plain_language"])
+            if self.state.phase == "exam" and severity >= 0.6:
                 with self._lock:
                     self.state.quiz_paused = True
-                    self.state.pause_reason = (
-                        "Exam paused — keep the IntelliQuiz camera app open on your phone. "
-                        "Do not open other apps during the exam."
-                    )
+                    self.state.pause_reason = plain
+                    self.state.student_alert = "⚠ WARNING: " + plain
+        elif self.state.phase == "exam" and severity >= 0.45:
+            with self._lock:
+                self.state.student_alert = "⚠ WARNING: " + plain + " A photo was saved for admin review."
         self._append(typ, severity, enriched)
 
     def _on_paired(self) -> None:
@@ -977,7 +992,13 @@ class SessionController:
             if self.state.phase == "exam" and hits:
                 self.state.quiz_paused = True
                 self.state.pause_reason = (
-                    "Exam paused — prohibited app detected. Close helper apps and return to the exam."
+                    "Exam paused — prohibited app detected (Chrome/Edge/helper). "
+                    "Close other apps and return to the exam window."
+                )
+                self.state.student_alert = (
+                    "⚠ WARNING: Prohibited app detected: "
+                    + ", ".join(names)
+                    + ". Photo + screen saved for admin. Other browsers were closed."
                 )
         payload: dict[str, Any] = {
             "hits": [{"name": h.name, "pid": h.pid, "category": h.category} for h in hits],

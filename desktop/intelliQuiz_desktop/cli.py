@@ -100,13 +100,11 @@ def cmd_preview(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _open_desktop_window(url: str) -> None:
-    """Wait for local UI, then open Edge/Chrome app window (desktop-app feel)."""
+def _open_desktop_window(url: str, controller) -> None:
+    """Wait for local UI, then open ONE Edge/Chrome app window via controller shell."""
     import time
     import urllib.error
     import urllib.request
-
-    from intelliQuiz_desktop.runtime.exam_shell import ExamShell, default_exam_profile_dir
 
     health = url.rstrip("/") + "/api/health"
     for _ in range(60):
@@ -117,10 +115,14 @@ def _open_desktop_window(url: str) -> None:
         except (urllib.error.URLError, TimeoutError, OSError):
             time.sleep(0.15)
 
-    shell = ExamShell(profile_dir=default_exam_profile_dir())
-    # App window (not fullscreen kiosk) for login / setup — looks like a desktop app.
+    shell = controller.exam_shell
+    living = shell.process is not None and shell.process.poll() is None
+    if living:
+        print(f"  Window   already open ({shell.browser})")
+        return
     if shell.launch(url, kiosk=False):
         print(f"  Window   opened with {shell.browser} (app mode)")
+        controller.app_lock.set_protected_cmdline_markers({str(shell.profile_dir.resolve())})
         return
     webbrowser.open(url)
     print("  Window   opened in default browser (Edge/Chrome not found)")
@@ -185,7 +187,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     threading.Thread(target=run_phone_https, name="phone-https", daemon=True).start()
 
     if not args.no_browser:
-        threading.Thread(target=_open_desktop_window, args=(url,), name="open-ui", daemon=True).start()
+        threading.Thread(
+            target=_open_desktop_window,
+            args=(url, controller),
+            name="open-ui",
+            daemon=True,
+        ).start()
     if settings.exam_kiosk_mode:
         print("  Kiosk     Exam phase switches to fullscreen Edge/Chrome lock")
 
