@@ -67,3 +67,9 @@ See `ml/README.md`. Best model: `ml/artifacts/models/best_model.joblib`.
 Admin configures/reviews · Desktop owns exam + AI + encrypted offline truth · Android is a paired sensor · Server syncs and reports.
 
 Read `docs/architecture.md` for the full flow.
+
+## Deploy (Railway)
+
+Admin Web + Backend API (one URL): see **`docs/DEPLOY-RAILWAY.md`**.
+
+Desktop / Android stay on student devices and point at that Railway API for login and sync.

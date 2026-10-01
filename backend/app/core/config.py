@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,10 +23,16 @@ class Settings(BaseSettings):
     ssl_enabled: bool = False
     ssl_certfile: str = ""
     ssl_keyfile: str = ""
+    # When set (Railway Docker), FastAPI also serves the built Admin Web SPA.
+    admin_static_dir: str = ""
+    port: int = int(os.environ.get("PORT", "8080"))
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        raw = self.cors_origins.strip()
+        if raw == "*":
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 @lru_cache

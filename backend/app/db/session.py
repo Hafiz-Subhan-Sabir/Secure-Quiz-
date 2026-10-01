@@ -3,8 +3,14 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 
-settings = get_settings()
-is_sqlite = settings.database_url.startswith("sqlite")
+# Normalize Railway-style postgres:// URLs for SQLAlchemy + psycopg3
+_db_url = settings.database_url
+if _db_url.startswith("postgres://"):
+    _db_url = "postgresql+psycopg://" + _db_url[len("postgres://") :]
+elif _db_url.startswith("postgresql://") and "+psycopg" not in _db_url:
+    _db_url = "postgresql+psycopg://" + _db_url[len("postgresql://") :]
+
+is_sqlite = _db_url.startswith("sqlite")
 
 connect_args: dict = {}
 engine_kwargs: dict = {
@@ -17,7 +23,7 @@ if is_sqlite:
 else:
     engine_kwargs.update(pool_size=10, max_overflow=20, pool_recycle=1800)
 
-engine = create_engine(settings.database_url, connect_args=connect_args, **engine_kwargs)
+engine = create_engine(_db_url, connect_args=connect_args, **engine_kwargs)
 
 
 @event.listens_for(engine, "connect")

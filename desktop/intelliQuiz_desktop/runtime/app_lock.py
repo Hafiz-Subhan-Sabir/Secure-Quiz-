@@ -115,9 +115,8 @@ class AppLockController:
 
     Conceptual model:
     - HARD/HELPER apps (chat/remote/notes/IDE) → detect + kill when enabled.
-    - Browsers → flag only. The student exam UI is hosted in Edge/Chrome, so
-      terminating browser PIDs closes the exam itself (especially on Windows
-      where protection via WMIC is often unavailable).
+    - Browsers → flag + capture evidence; kill only unprotected PIDs when
+      ``kill_browsers`` is True (exam Edge/Chrome profile stays protected).
     """
 
     def __init__(
@@ -129,8 +128,8 @@ class AppLockController:
         on_violation: Callable[[list[ProcessHit], list[str]], None] | None = None,
     ) -> None:
         self.kill = kill
-        # Hard-disable browser killing: exam shell is Edge/Chrome today.
-        self.kill_browsers = False
+        self.kill_browsers = bool(kill_browsers)
+        self._want_kill_browsers = bool(kill_browsers)
         self.interval_sec = interval_sec
         self.on_violation = on_violation
         self.state = AppLockState()
@@ -152,6 +151,9 @@ class AppLockController:
         """Protect browser processes whose command line contains these substrings."""
         with self._lock:
             self._protected_markers = {m for m in markers if m}
+            # Enable browser kill only after exam profile is known (keeps exam UI alive).
+            if self._want_kill_browsers and self._protected_markers:
+                self.kill_browsers = True
 
     def apply_profile(self, *, blacklist_csv: str, strictness: str) -> None:
         """Merge server proctoring blacklist into the scanner."""
@@ -161,8 +163,8 @@ class AppLockController:
         with self._lock:
             self._extra_hard = hard_names
             self._extra_browser = browser_names
-            # Keep kill_browsers off regardless of strictness — exam UI is a browser.
-            self.kill_browsers = False
+            self._want_kill_browsers = strictness in {"medium", "high", "lockdown"}
+            self.kill_browsers = bool(self._want_kill_browsers and self._protected_markers)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -207,8 +209,7 @@ class AppLockController:
                     continue
                 if hit.name in PROTECTED_NAMES:
                     continue
-                if hit.category == "browser":
-                    # Never kill browsers — exam window is Edge/Chrome.
+                if hit.category == "browser" and not self.kill_browsers:
                     continue
                 if _terminate(hit.pid):
                     killed.append(f"{hit.name}:{hit.pid}")

@@ -970,26 +970,47 @@ class SessionController:
 
     def _on_app_violation(self, hits: list[ProcessHit], killed: list[str]) -> None:
         hard = [h for h in hits if h.category == "hard"]
-        severity = 0.9 if hard else 0.55
+        browsers = [h for h in hits if h.category == "browser"]
+        severity = 0.9 if hard else (0.8 if browsers else 0.55)
+        names = sorted({h.name for h in hits})
         with self._lock:
             if self.state.phase == "exam" and hits:
                 self.state.quiz_paused = True
                 self.state.pause_reason = (
                     "Exam paused — prohibited app detected. Close helper apps and return to the exam."
                 )
-        self._append(
-            "app_violation",
-            severity,
-            {
-                "hits": [{"name": h.name, "pid": h.pid, "category": h.category} for h in hits],
-                "killed": killed,
-                "plain_language": (
-                    "Blocked app activity during exam: "
-                    + ", ".join(sorted({h.name for h in hits}))
-                ),
-                "source": "desktop_app_lock",
-            },
-        )
+        payload: dict[str, Any] = {
+            "hits": [{"name": h.name, "pid": h.pid, "category": h.category} for h in hits],
+            "killed": killed,
+            "plain_language": (
+                "Blocked / flagged app activity during exam: " + ", ".join(names)
+                + ". Webcam photo and screen snapshot saved for admin review."
+            ),
+            "source": "desktop_app_lock",
+            "gesture_label": "APP_VIOLATION",
+            "cheating_attempt": True,
+            "flag": "prohibited_app",
+        }
+        # Always try to attach evidence (works offline; syncs when Railway is reachable).
+        try:
+            from intelliQuiz_desktop.runtime.evidence import capture_screen_data_uri
+
+            screen = capture_screen_data_uri()
+            if screen:
+                payload["screen_image_data_uri"] = screen
+        except Exception:
+            pass
+        try:
+            jpeg = self.monitor.latest_jpeg()
+            if jpeg:
+                import base64
+
+                payload["image_data_uri"] = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode(
+                    "ascii"
+                )
+        except Exception:
+            pass
+        self._append("app_violation", severity, payload)
 
     def _start_heartbeat(self) -> None:
         if self._hb_thread and self._hb_thread.is_alive():

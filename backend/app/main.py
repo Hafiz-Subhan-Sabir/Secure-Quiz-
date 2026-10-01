@@ -1,9 +1,12 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 import time
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.db.base import Base
@@ -41,7 +44,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
-        allow_credentials=True,
+        allow_credentials=settings.cors_origin_list != ["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -71,7 +74,34 @@ def create_app() -> FastAPI:
     app.include_router(sync_router, prefix=api)
     app.include_router(reports_router, prefix=api)
 
+    _mount_admin_spa(app, settings.admin_static_dir)
+
     return app
+
+
+def _mount_admin_spa(app: FastAPI, static_dir: str) -> None:
+    """Serve built Admin Web (Vite dist) from the same host as the API."""
+    if not static_dir:
+        return
+    root = Path(static_dir)
+    index = root / "index.html"
+    if not index.is_file():
+        return
+
+    assets = root / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets)), name="admin-assets")
+
+    @app.get("/")
+    def admin_index() -> FileResponse:
+        return FileResponse(index)
+
+    @app.get("/{full_path:path}")
+    def admin_spa(full_path: str) -> FileResponse:
+        candidate = root / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(index)
 
 
 app = create_app()
@@ -83,8 +113,6 @@ def run() -> None:
     settings = get_settings()
     ssl_kwargs: dict = {}
     if settings.ssl_enabled:
-        from pathlib import Path
-
         from app.core.certs import ensure_api_tls
 
         cert_dir = Path(__file__).resolve().parents[1] / "certs"
@@ -95,8 +123,8 @@ def run() -> None:
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8080,
-        reload=True,
+        port=settings.port,
+        reload=settings.debug,
         log_level="info",
         **ssl_kwargs,
     )
