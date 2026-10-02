@@ -8,6 +8,15 @@ import {
   type IntegrityReport,
 } from "@/shared/api/client";
 
+function flagChip(flag: string): string {
+  const f = flag.toLowerCase();
+  if (f.includes("phone")) return "Phone";
+  if (f.includes("app") || f.includes("browser")) return "App";
+  if (f.includes("face") || f.includes("gaze")) return "Face";
+  if (f.includes("screen")) return "Screen";
+  return flag.replace(/_/g, " ").slice(0, 18);
+}
+
 export function ReportsPage() {
   const [params] = useSearchParams();
   const [sessionId, setSessionId] = useState(params.get("session") ?? "");
@@ -52,22 +61,20 @@ export function ReportsPage() {
   }
 
   const active = report?.evidence.find((e) => e.event_id === activePhoto) ?? null;
+  const needsReview = pct >= 40 || (report?.flags.length ?? 0) > 0 || (report?.evidence.length ?? 0) > 0;
 
   return (
     <>
-      <p className="section-lead">
-        <strong>What to do:</strong> check the integrity score, then browse photos left → right. Screen
-        snapshots appear alongside webcam / phone frames.
-      </p>
+      <p className="section-lead">Check score → browse photos → decide.</p>
 
       <section className="panel" style={{ marginBottom: "1rem" }}>
         <form className="report-form" onSubmit={onLoad}>
           <label className="field">
-            <span>Attempt / Session ID</span>
+            <span>Session ID</span>
             <input
               value={sessionId}
               onChange={(e) => setSessionId(e.target.value)}
-              placeholder="Paste an ID, or open one from Attempts & flags"
+              placeholder="Paste ID or open from Attempts"
               required
             />
           </label>
@@ -75,7 +82,7 @@ export function ReportsPage() {
             {loading ? "Loading…" : "Show report"}
           </button>
           <Link className="ghost-btn compact" to="/attempts">
-            Pick from attempts
+            Attempts
           </Link>
         </form>
         {error ? <p className="error-text" style={{ marginTop: "0.75rem" }}>{error}</p> : null}
@@ -83,97 +90,54 @@ export function ReportsPage() {
 
       {report ? (
         <>
-          {pct >= 40 || report.flags.length > 0 || report.evidence.length > 0 ? (
-            <section
-              className="panel"
-              style={{
-                marginBottom: "1rem",
-                borderColor: "rgba(180, 35, 24, 0.35)",
-                background: "rgba(180, 35, 24, 0.06)",
-              }}
-            >
-              <h2 style={{ color: "var(--danger)", marginTop: 0 }}>
-                🚨 Cheating review needed
-              </h2>
-              <p className="summary-plain" style={{ marginBottom: "0.5rem" }}>
-                {report.summary_plain}
-              </p>
-              <p className="status">
-                Risk <strong>{pct}%</strong>
-                {report.flags.length ? ` · Flags: ${report.flags.join(", ")}` : ""}
-                {report.evidence.length ? ` · ${report.evidence.length} evidence photo(s)` : ""}
-              </p>
-            </section>
-          ) : (
-            <section className="panel" style={{ marginBottom: "1rem" }}>
-              <h2 style={{ marginTop: 0 }}>Looks clean</h2>
-              <p className="status">No strong cheating signals on this attempt.</p>
-            </section>
-          )}
-
-          <section className="panel report-hero">
-            <div>
-              <p className="eyebrow">Student</p>
-              <h2>
-                {report.student_name || "Unknown student"}{" "}
-                <span className="soft">· {report.exam_title}</span>
-              </h2>
-              <p className="summary-plain">{report.summary_plain}</p>
-              {report.student_email ? (
-                <p className="status" style={{ marginTop: "0.5rem" }}>{report.student_email}</p>
-              ) : null}
-            </div>
-            <div className="score-box">
-              <p className="label">Integrity concern</p>
-              <p className="value">{pct}%</p>
-              <p className="status">{riskLabel(report.cheating_probability)}</p>
-              <div className="risk-bar" aria-hidden>
-                <span style={{ width: `${Math.min(100, pct)}%` }} />
-              </div>
-              {report.quiz_max_score ? (
-                <p className="status" style={{ marginTop: "0.75rem" }}>
-                  Quiz score: <strong>{report.quiz_score}/{report.quiz_max_score}</strong>{" "}
-                  ({Math.round(report.quiz_percent || 0)}%)
+          <section
+            className="panel"
+            style={{
+              marginBottom: "1rem",
+              borderColor: needsReview ? "rgba(180, 35, 24, 0.35)" : "rgba(31, 122, 77, 0.3)",
+              background: needsReview ? "rgba(180, 35, 24, 0.06)" : "rgba(31, 122, 77, 0.06)",
+            }}
+          >
+            <div className="attempt-top">
+              <div>
+                <h2 style={{ margin: 0, color: needsReview ? "var(--danger)" : "var(--ok)" }}>
+                  {needsReview ? "Review needed" : "Looks clean"}
+                </h2>
+                <p className="status" style={{ marginTop: "0.35rem" }}>
+                  {report.student_name} · {report.exam_title}
                 </p>
+              </div>
+              <span className={`pill risk-${pct >= 65 ? "high" : pct >= 40 ? "mid" : "ok"}`}>
+                {riskLabel(report.cheating_probability)} · {pct}%
+              </span>
+            </div>
+            <div className="chip-row" style={{ marginTop: "0.75rem" }}>
+              {report.flags.length
+                ? report.flags.map((f) => (
+                    <span key={f} className="chip chip-danger">
+                      {flagChip(f)}
+                    </span>
+                  ))
+                : (
+                  <span className="chip chip-ok">No flags</span>
+                )}
+              <span className="chip">{report.evidence.length} photo(s)</span>
+              {report.quiz_max_score ? (
+                <span className="chip">
+                  Score {report.quiz_score}/{report.quiz_max_score}
+                </span>
               ) : null}
             </div>
+            <p className="summary-plain" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+              {report.summary_plain}
+            </p>
           </section>
 
-          <section className="panel" style={{ marginTop: "1rem" }}>
-            <h2>Student &amp; attempt</h2>
-            <dl className="attempt-meta">
-              <div>
-                <dt>Student</dt>
-                <dd>{report.student_name || "—"}</dd>
-              </div>
-              <div>
-                <dt>Email</dt>
-                <dd>{report.student_email || "—"}</dd>
-              </div>
-              <div>
-                <dt>Exam</dt>
-                <dd>{report.exam_title || "—"}</dd>
-              </div>
-              <div>
-                <dt>Status</dt>
-                <dd>{report.status}</dd>
-              </div>
-              <div>
-                <dt>Flags</dt>
-                <dd>{report.flags.length ? report.flags.join(", ") : "None"}</dd>
-              </div>
-              <div>
-                <dt>Events</dt>
-                <dd>{report.event_count} notable</dd>
-              </div>
-            </dl>
-          </section>
-
-          <div className="split-2" style={{ marginTop: "1rem" }}>
+          <div className="split-2">
             <section className="panel">
-              <h2>Captured evidence ({report.evidence.length})</h2>
+              <h2>Evidence ({report.evidence.length})</h2>
               {!report.evidence.length ? (
-                <p className="status">No photos were saved for this attempt.</p>
+                <p className="status">No photos saved.</p>
               ) : (
                 <>
                   {active ? (
@@ -181,8 +145,6 @@ export function ReportsPage() {
                       <img src={active.image_data_uri} alt={active.plain_language} />
                       <figcaption>
                         <strong>{active.gesture_label}</strong> · {sourceLabel(active.source)}
-                        <br />
-                        {active.plain_language}
                         <br />
                         <span className="status">{formatWhen(active.captured_at)}</span>
                       </figcaption>
@@ -208,22 +170,22 @@ export function ReportsPage() {
             </section>
 
             <section className="panel">
-              <h2>What happened (timeline)</h2>
+              <h2>Timeline</h2>
               <div className="timeline">
-                {report.timeline.map((item) => (
-                  <div className="timeline-item" key={String(item.event_id)}>
-                    <span className="status">{formatWhen(String(item.ts))}</span>
-                    <div>
-                      <strong>{String(item.plain_language ?? item.type)}</strong>
-                      <div className="status">
-                        {String(item.type)}
-                        {item.gesture_label ? ` · ${String(item.gesture_label)}` : ""}
-                        {item.student_name ? ` · ${String(item.student_name)}` : ""}
+                {report.timeline.map((item) => {
+                  const label = String(item.gesture_label || item.type || "event");
+                  const short =
+                    label.length > 28 ? label.slice(0, 25) + "…" : label.replace(/_/g, " ");
+                  return (
+                    <div className="timeline-item" key={String(item.event_id)}>
+                      <span className="status">{formatWhen(String(item.ts))}</span>
+                      <div>
+                        <strong>{short}</strong>
                       </div>
+                      <strong>{Math.round(Number(item.severity) * 100)}%</strong>
                     </div>
-                    <strong>{Math.round(Number(item.severity) * 100)}%</strong>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           </div>

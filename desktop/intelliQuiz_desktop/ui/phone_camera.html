@@ -50,13 +50,51 @@
       }
       .steps {
         display: grid;
-        gap: 0.35rem;
+        grid-template-columns: 1fr;
+        gap: 0.4rem;
         margin: 0.75rem 0 1rem;
+      }
+      .step-pill {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.55rem 0.7rem;
+        border-radius: 12px;
+        background: rgba(232, 242, 238, 0.06);
+        border: 1px solid rgba(232, 242, 238, 0.1);
         font-size: 0.88rem;
         color: var(--muted);
-        line-height: 1.4;
+        line-height: 1.3;
       }
-      .steps strong { color: var(--ink); }
+      .step-pill strong {
+        color: var(--ink);
+        min-width: 1.1rem;
+      }
+      .step-pill.on {
+        border-color: rgba(61, 214, 140, 0.45);
+        background: rgba(61, 214, 140, 0.1);
+        color: var(--ok);
+      }
+      .step-pill.wait {
+        border-color: rgba(240, 160, 32, 0.4);
+        background: rgba(240, 160, 32, 0.1);
+        color: #f0b84a;
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin: 0.35rem 0 0.85rem;
+        padding: 0.4rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        background: rgba(155, 181, 172, 0.15);
+        color: var(--muted);
+      }
+      .status-pill.ok { background: rgba(61, 214, 140, 0.18); color: var(--ok); }
+      .status-pill.wait { background: rgba(240, 160, 32, 0.18); color: #f0b84a; }
+      .status-pill.err { background: rgba(255, 123, 114, 0.18); color: var(--danger); }
       .stage {
         position: relative;
         flex: 1;
@@ -125,16 +163,17 @@
   <body>
     <div class="wrap">
       <p class="brand">IntelliQuiz</p>
+      <div class="status-pill wait" id="statusPill">Connecting…</div>
       <div class="steps">
-        <div><strong>1.</strong> If you see a security warning → Advanced → Proceed / Continue</div>
-        <div><strong>2.</strong> Tap Allow when asked for camera</div>
-        <div><strong>3.</strong> Wait for “Paired”, keep this page open</div>
+        <div class="step-pill wait" id="step1"><strong>1</strong> Open this https link (Advanced → Proceed if warned)</div>
+        <div class="step-pill" id="step2"><strong>2</strong> Tap Allow for camera</div>
+        <div class="step-pill" id="step3"><strong>3</strong> Keep this page open during the exam</div>
       </div>
       <div class="stage">
         <video id="preview" playsinline muted autoplay></video>
         <div class="lock-banner wait" id="banner">Allow camera to continue…</div>
       </div>
-      <p class="done-note" id="doneNote">Paired. Leave this screen open and continue on the computer.</p>
+      <p class="done-note" id="doneNote">Paired ✓ — leave this screen open. Continue on the computer.</p>
       <div class="footer">
         <button class="primary" type="button" id="btnStart">Allow camera &amp; pair</button>
         <button class="ghost" type="button" id="btnFlip">Flip camera</button>
@@ -160,6 +199,27 @@
         const el = $("banner");
         el.textContent = text;
         el.className = "lock-banner " + cls;
+        const pill = $("statusPill");
+        if (pill) {
+          pill.className = "status-pill " + cls;
+          pill.textContent = cls === "ok" ? "Paired · camera live" : cls === "err" ? "Action needed" : "Waiting…";
+        }
+        const s1 = $("step1");
+        const s2 = $("step2");
+        const s3 = $("step3");
+        if (s1 && s2 && s3) {
+          s1.className = "step-pill on";
+          if (cls === "ok") {
+            s2.className = "step-pill on";
+            s3.className = "step-pill on";
+          } else if (cls === "err") {
+            s2.className = "step-pill wait";
+            s3.className = "step-pill";
+          } else {
+            s2.className = "step-pill wait";
+            s3.className = "step-pill";
+          }
+        }
       }
 
       function sendJson(obj) {

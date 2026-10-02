@@ -314,6 +314,7 @@
       .checklist li.current .mark { background: rgba(11, 107, 88, 0.18); color: var(--accent); }
       .checklist li.wait .mark { background: rgba(184, 106, 28, 0.15); color: var(--warn); }
       .ok { color: var(--ok); font-weight: 700; }
+      .ok-text { color: var(--ok); font-weight: 650; }
       .mid { color: var(--warn); font-weight: 700; }
       .bad { color: var(--danger); font-weight: 700; }
       .note { color: var(--muted); font-size: 0.84rem; line-height: 1.45; }
@@ -342,6 +343,76 @@
         color: var(--danger);
         font-size: 0.88rem;
       }
+      .warn-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 80;
+        display: grid;
+        place-items: center;
+        background: rgba(8, 18, 14, 0.78);
+        backdrop-filter: blur(8px);
+        padding: 1rem;
+      }
+      .warn-modal.hidden { display: none !important; }
+      .warn-card {
+        width: min(420px, 100%);
+        background: #fffdf9;
+        border-radius: 18px;
+        padding: 1.35rem 1.25rem 1.15rem;
+        border: 2px solid rgba(184, 106, 28, 0.45);
+        box-shadow: 0 22px 55px rgba(0,0,0,0.28);
+        text-align: center;
+        animation: rise 360ms var(--ease) both;
+      }
+      .warn-card.danger {
+        border-color: rgba(180, 35, 24, 0.55);
+        background: #fff8f7;
+      }
+      .warn-icon {
+        width: 3rem;
+        height: 3rem;
+        margin: 0 auto 0.65rem;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 1.45rem;
+        font-weight: 800;
+        background: rgba(184, 106, 28, 0.14);
+        color: var(--warn);
+      }
+      .warn-card.danger .warn-icon {
+        background: rgba(180, 35, 24, 0.14);
+        color: var(--danger);
+      }
+      .warn-card h2 {
+        margin: 0 0 0.4rem;
+        font-family: var(--font-brand);
+        font-size: 1.35rem;
+        letter-spacing: -0.03em;
+      }
+      .warn-card p {
+        margin: 0 0 1rem;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.4;
+      }
+      .pair-status {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+        margin: 0.75rem 0 0.35rem;
+      }
+      .pair-chip {
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0.35rem 0.65rem;
+        border-radius: 999px;
+        background: rgba(16, 36, 28, 0.06);
+        color: var(--muted);
+      }
+      .pair-chip.on { background: rgba(31, 122, 77, 0.15); color: var(--ok); }
+      .pair-chip.wait { background: rgba(184, 106, 28, 0.14); color: var(--warn); }
+      .pair-chip.bad { background: rgba(180, 35, 24, 0.12); color: var(--danger); }
       .evidence {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
@@ -549,16 +620,20 @@
               </div>
 
               <div id="panel-phone" class="hidden">
-                <h1>Pair your phone (required)</h1>
-                <p class="lead">Even with a PC webcam, your phone must stay linked. Same Wi‑Fi as this PC. Keep the IntelliQuiz app open — opening other apps is flagged as cheating.</p>
+                <h1>Pair your phone</h1>
+                <p class="lead">Same Wi‑Fi as this PC. Scan → Allow camera → Keep page open.</p>
+                <div class="pair-status" id="pairChips">
+                  <span class="pair-chip wait" id="chipScan">1 · Scan QR</span>
+                  <span class="pair-chip" id="chipCam">2 · Allow camera</span>
+                  <span class="pair-chip" id="chipLive">3 · Stay paired</span>
+                </div>
                 <div class="qr-box"><img id="qrImg" alt="Phone camera QR" /></div>
-                <p class="note" style="margin:0 0 0.25rem"><strong>Scan this QR</strong> — opens an <strong>https://</strong> phone page (required for camera).</p>
-                <div class="url-box" id="qrUrlBox">Generating phone camera link…</div>
+                <div class="url-box" id="qrUrlBox">Generating phone link…</div>
                 <button type="button" class="ghost" id="btnCopyUrl" style="margin-bottom:0.5rem">Copy phone link</button>
-                <p class="note" id="qrEndpoint">Phone must be on the <strong>same router</strong> as this PC (Wi‑Fi + Ethernet is fine). Guest Wi‑Fi often blocks this.</p>
-                <button type="button" class="linkish" id="btnSwitchWebcam">Back to PC webcam check →</button>
+                <p class="note" id="qrEndpoint">Same router / Wi‑Fi. Guest networks often fail.</p>
+                <button type="button" class="linkish" id="btnSwitchWebcam">← Back to PC webcam</button>
                 <details style="margin-top:0.75rem">
-                  <summary class="note" style="cursor:pointer">Lab / demo without a phone</summary>
+                  <summary class="note" style="cursor:pointer">Lab only — no phone</summary>
                   <button class="ghost" type="button" id="btnLabPair" style="margin-top:0.5rem">Mark phone paired (lab)</button>
                 </details>
               </div>
@@ -685,17 +760,26 @@
     <div class="pause-overlay hidden" id="pauseOverlay" role="alertdialog" aria-modal="true">
       <div class="pause-card">
         <p class="now-doing">Quiz paused</p>
-        <h1>Camera required</h1>
+        <h1 id="pauseTitle">Fix this to continue</h1>
         <p class="lead" id="pauseReason">Restore camera access to continue.</p>
         <div id="pausePhoneBlock" class="hidden">
-          <p class="note"><strong>Scan again</strong> with your phone (same Wi‑Fi), then allow the camera.</p>
+          <p class="note"><strong>Scan again</strong> → Allow camera → Keep page open.</p>
           <div class="qr-box"><img id="pauseQrImg" alt="Re-pair QR" /></div>
           <div class="url-box" id="pauseQrUrl">…</div>
         </div>
         <div class="actions" style="margin-top:1rem">
-          <button class="primary" type="button" id="btnResume">Continue when camera is ready</button>
+          <button class="primary" type="button" id="btnResume">Continue when ready</button>
         </div>
         <p class="err hidden" id="pauseErr"></p>
+      </div>
+    </div>
+
+    <div class="warn-modal hidden" id="warnModal" role="alertdialog" aria-modal="true">
+      <div class="warn-card" id="warnCard">
+        <div class="warn-icon" id="warnIcon">!</div>
+        <h2 id="warnTitle">Warning</h2>
+        <p id="warnBody">Something looked unusual.</p>
+        <button class="primary" type="button" id="warnOk" style="width:100%">OK — I understand</button>
       </div>
     </div>
 
@@ -716,6 +800,8 @@
       let advancing = false;
       let camFailStreak = 0;
       let quizPaused = false;
+      let lastWarnKey = "";
+      let warnDismissedKey = "";
 
       const $ = (id) => document.getElementById(id);
 
@@ -1052,9 +1138,13 @@
         quizPaused = paused;
         $("pauseOverlay").classList.toggle("hidden", !paused);
         if (!paused) return;
-        $("pauseReason").textContent = st.pause_reason || "Camera access is required to continue.";
+        const reason = st.pause_reason || "Camera access is required to continue.";
+        const short = shortenAlert(reason);
+        $("pauseTitle").textContent = short.title;
+        $("pauseReason").textContent = short.body;
         const pair = st.pairing || {};
-        const phone = st.identity_source === "phone" || setupMode === "phone";
+        const phone = st.identity_source === "phone" || setupMode === "phone"
+          || /phone/i.test(reason);
         $("pausePhoneBlock").classList.toggle("hidden", !phone);
         if (pair.qr_png_data_uri) {
           $("pauseQrImg").src = pair.qr_png_data_uri;
@@ -1063,6 +1153,70 @@
         const url = pair.qr_text || pair.mobile_camera_url || "";
         $("pauseQrUrl").textContent = url || "Waiting for phone link…";
         syncFooter();
+      }
+
+      function shortenAlert(raw) {
+        const msg = String(raw || "").replace(/^⚠\s*WARNING:\s*/i, "").trim();
+        const m = msg.toLowerCase();
+        if (m.includes("exam started") || m.includes("keep this window")) {
+          return { title: "Exam rules", body: "Keep this window open. Don’t open Chrome, Edge, or other apps.", danger: false };
+        }
+        if (m.includes("prohibited") || m.includes("chrome") || m.includes("edge") || m.includes("helper")) {
+          return { title: "App not allowed", body: "Close other browsers/apps. Return to this exam window.", danger: true };
+        }
+        if (m.includes("focus") || m.includes("another app")) {
+          return { title: "Stay on the exam", body: "You switched away. Come back to continue.", danger: true };
+        }
+        if (m.includes("phone") && (m.includes("disconnect") || m.includes("lost") || m.includes("required"))) {
+          return { title: "Phone camera needed", body: "Scan the QR, allow camera, keep the page open.", danger: true };
+        }
+        if (m.includes("phone") && (m.includes("moved") || m.includes("switch"))) {
+          return { title: "Keep phone steady", body: "Don’t move the phone or leave the camera page.", danger: true };
+        }
+        if (m.includes("webcam") || m.includes("pc cam") || m.includes("camera was lost")) {
+          return { title: "PC camera needed", body: "Reconnect the webcam or allow camera access.", danger: true };
+        }
+        if (m.includes("looking") || m.includes("gaze") || m.includes("face")) {
+          return { title: "Face the camera", body: "Look at the webcam. A photo was saved for review.", danger: false };
+        }
+        if (m.includes("photo") || m.includes("evidence")) {
+          return { title: "Warning recorded", body: "A photo was saved for admin review. Keep following the rules.", danger: false };
+        }
+        const shortBody = msg.length > 110 ? msg.slice(0, 107) + "…" : (msg || "Something looked unusual.");
+        return { title: "Warning", body: shortBody, danger: /cheat|violat|prohibited|paused/i.test(msg) };
+      }
+
+      function showWarnPopup(title, body, danger) {
+        const key = title + "|" + body;
+        if (key === warnDismissedKey) return;
+        if (key === lastWarnKey && !$("warnModal").classList.contains("hidden")) return;
+        lastWarnKey = key;
+        $("warnTitle").textContent = title;
+        $("warnBody").textContent = body;
+        $("warnIcon").textContent = danger ? "!" : "!";
+        $("warnCard").classList.toggle("danger", !!danger);
+        $("warnModal").classList.remove("hidden");
+      }
+
+      function hideWarnPopup() {
+        warnDismissedKey = lastWarnKey;
+        $("warnModal").classList.add("hidden");
+      }
+
+      function updatePairChips(st) {
+        const pair = (st && st.pairing) || {};
+        const paired = !!(st && (st.android_paired || pair.paired));
+        const live = !!(pair.camera_live || (pair.android_frames || 0) > 0);
+        const scan = $("chipScan");
+        const cam = $("chipCam");
+        const liveEl = $("chipLive");
+        if (!scan) return;
+        scan.className = "pair-chip " + (paired || live ? "on" : "wait");
+        cam.className = "pair-chip " + (live ? "on" : paired ? "wait" : "");
+        liveEl.className = "pair-chip " + (paired && live ? "on" : paired ? "wait" : "");
+        scan.textContent = paired || live ? "1 · QR opened" : "1 · Scan QR";
+        cam.textContent = live ? "2 · Camera on" : "2 · Allow camera";
+        liveEl.textContent = paired && live ? "3 · Paired ✓" : "3 · Stay paired";
       }
 
       function updateChecklist(st) {
@@ -1206,6 +1360,7 @@
 
         renderEvidence(mon.last_evidence || []);
         updateChecklist(st);
+        updatePairChips(st);
         showPauseOverlay(st);
         syncFooter();
 
@@ -1224,26 +1379,34 @@
         if (phase === "exam") {
           const alertEl = $("liveAlert");
           if (st.quiz_paused && st.pause_reason) {
-            alertEl.textContent = "⏸ EXAM PAUSED: " + st.pause_reason;
+            const short = shortenAlert(st.pause_reason);
+            alertEl.textContent = "⏸ " + short.title + " — " + short.body;
             alertEl.classList.remove("hidden");
-            alertEl.style.background = "#ffe8e6";
-            alertEl.style.borderColor = "#ff7b72";
+            alertEl.style.background = "rgba(180, 35, 24, 0.12)";
+            alertEl.style.color = "var(--danger)";
+            // Pause card is the main UX; don't stack a second popup
+            if (!$("warnModal").classList.contains("hidden")) hideWarnPopup();
           } else if (st.student_alert) {
-            alertEl.textContent = st.student_alert;
+            const short = shortenAlert(st.student_alert);
+            alertEl.textContent = "⚠ " + short.title + " — " + short.body;
             alertEl.classList.remove("hidden");
-            alertEl.style.background = "#fff4e0";
-            alertEl.style.borderColor = "#f0a020";
+            alertEl.style.background = "rgba(184, 106, 28, 0.14)";
+            alertEl.style.color = "var(--warn)";
+            showWarnPopup(short.title, short.body, short.danger);
           } else if (mon.looking_away || (mon.last_risk >= 0.4 && mon.message)) {
-            alertEl.textContent =
-              "⚠ " + (mon.message || "Face/gaze rule broken") + " — a photo was saved for admin review.";
+            const short = shortenAlert(mon.message || "Face the camera");
+            alertEl.textContent = "⚠ " + short.title + " — " + short.body;
             alertEl.classList.remove("hidden");
-            alertEl.style.background = "#fff4e0";
-            alertEl.style.borderColor = "#f0a020";
+            alertEl.style.background = "rgba(184, 106, 28, 0.14)";
+            alertEl.style.color = "var(--warn)";
+            showWarnPopup(short.title, short.body, false);
             $("examCam").classList.remove("flash");
             void $("examCam").offsetWidth;
             $("examCam").classList.add("flash");
           } else {
             alertEl.classList.add("hidden");
+            lastWarnKey = "";
+            warnDismissedKey = "";
           }
         }
         if (st.exam_title) $("topMeta").textContent = `${st.exam_title} · ${st.phase}`;
@@ -1568,6 +1731,7 @@
 
       $("btnResume").onclick = async () => {
         $("pauseErr").classList.add("hidden");
+        hideWarnPopup();
         try {
           await api("/api/phase/resume", { method: "POST" });
           await pollStatus();
@@ -1577,6 +1741,8 @@
           $("pauseErr").classList.remove("hidden");
         }
       };
+
+      $("warnOk").onclick = () => hideWarnPopup();
 
       $("btnLabPair").onclick = async () => {
         await api("/api/pairing/mark", { method: "POST" });

@@ -227,15 +227,15 @@ export const api = {
 };
 
 export function riskLabel(score: number): string {
-  if (score >= 0.65) return "High concern";
-  if (score >= 0.4) return "Needs review";
-  return "Looks fine";
+  if (score >= 0.65) return "High";
+  if (score >= 0.4) return "Review";
+  return "OK";
 }
 
 export function sourceLabel(source: string): string {
-  if (source === "android_camera") return "Phone camera (side / rear view)";
-  if (source === "screen") return "Screen capture";
-  return "Laptop webcam";
+  if (source === "android_camera") return "Phone";
+  if (source === "screen") return "Screen";
+  return "Webcam";
 }
 
 export function formatWhen(iso: string): string {

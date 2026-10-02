@@ -36,8 +36,7 @@ export function AttemptsPage() {
   return (
     <>
       <p className="section-lead">
-        <strong>What to do:</strong> open any flagged student → Review evidence → decide if the attempt is valid.
-        Flagged means high risk or auto-captured photos.
+        Open a flagged student → review photos → decide.
       </p>
 
       <div className="toolbar">
@@ -47,7 +46,7 @@ export function AttemptsPage() {
             className={filter === "all" ? "seg-on" : ""}
             onClick={() => setFilter("all")}
           >
-            All attempts ({attempts.length})
+            All ({attempts.length})
           </button>
           <button
             type="button"
@@ -64,6 +63,7 @@ export function AttemptsPage() {
       <div className="attempt-grid">
         {visible.map((a) => {
           const risk = a.last_risk_score;
+          const riskTier = risk >= 0.65 ? "high" : risk >= 0.4 ? "mid" : "ok";
           return (
             <article key={a.session_id} className={`attempt-card ${a.flagged ? "is-flagged" : ""}`}>
               <div className="attempt-top">
@@ -71,47 +71,35 @@ export function AttemptsPage() {
                   <h3>{a.student_name}</h3>
                   <p className="status">{a.student_email}</p>
                 </div>
-                <span className={`pill risk-${risk >= 0.65 ? "high" : risk >= 0.4 ? "mid" : "ok"}`}>
+                <span className={`pill risk-${riskTier}`}>
                   {riskLabel(risk)} · {Math.round(risk * 100)}%
                 </span>
               </div>
               <p className="attempt-exam">{a.exam_title}</p>
-              {a.flagged ? (
-                <p className="flag-banner">
-                  🚨 CHEATING SUSPECTED —{" "}
-                  {a.evidence_count > 0
-                    ? `${a.evidence_count} photo(s) / screen captures when rules were broken`
-                    : "Elevated integrity risk — open the report now"}
-                </p>
-              ) : (
-                <p className="status" style={{ marginTop: "0.35rem" }}>
-                  No major flags yet
-                </p>
-              )}
-              <dl className="attempt-meta">
-                <div>
-                  <dt>Started</dt>
-                  <dd>{formatWhen(a.started_at)}</dd>
-                </div>
-                <div>
-                  <dt>Quiz score</dt>
-                  <dd>
-                    {a.quiz_max_score
-                      ? `${a.quiz_score ?? 0}/${a.quiz_max_score} (${Math.round(a.quiz_percent ?? 0)}%)`
-                      : a.status === "submitted"
-                        ? "Pending grade"
-                        : "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Phone camera</dt>
-                  <dd>{a.android_paired ? "Paired" : "Not paired"}</dd>
-                </div>
-                <div>
-                  <dt>Auto photos</dt>
-                  <dd>{a.evidence_count} saved</dd>
-                </div>
-              </dl>
+
+              <div className="chip-row">
+                {a.flagged ? (
+                  <span className="chip chip-danger">Review needed</span>
+                ) : (
+                  <span className="chip chip-ok">Clear</span>
+                )}
+                <span className="chip">
+                  {a.evidence_count > 0 ? `${a.evidence_count} photo(s)` : "No photos"}
+                </span>
+                <span className={`chip ${a.android_paired ? "chip-ok" : "chip-muted"}`}>
+                  Phone {a.android_paired ? "paired" : "off"}
+                </span>
+                {a.quiz_max_score ? (
+                  <span className="chip">
+                    Score {a.quiz_score ?? 0}/{a.quiz_max_score}
+                  </span>
+                ) : null}
+              </div>
+
+              <p className="status" style={{ margin: 0 }}>
+                {formatWhen(a.started_at)}
+              </p>
+
               <Link className="primary-btn block" to={`/reports?session=${a.session_id}`}>
                 Review evidence
               </Link>
@@ -119,10 +107,7 @@ export function AttemptsPage() {
           );
         })}
         {!visible.length && !error ? (
-          <p className="empty-state">
-            No attempts yet. When a student finishes (or is mid-exam), their session appears here.
-            A demo attempt with sample face photos is seeded on first API start.
-          </p>
+          <p className="empty-state">No attempts yet.</p>
         ) : null}
       </div>
     </>

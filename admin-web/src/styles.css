@@ -241,10 +241,11 @@ button {
 }
 
 .section-lead {
-  margin: 0 0 1.1rem;
+  margin: 0 0 1rem;
   color: var(--muted);
-  max-width: 52ch;
-  line-height: 1.5;
+  max-width: 40ch;
+  line-height: 1.4;
+  font-size: 0.95rem;
 }
 
 .primary-btn {
@@ -714,6 +715,39 @@ button {
   border: 1px solid rgba(180, 35, 24, 0.25);
 }
 
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(16, 36, 28, 0.07);
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.chip-ok {
+  background: rgba(31, 122, 77, 0.14);
+  color: var(--ok);
+}
+
+.chip-danger {
+  background: rgba(180, 35, 24, 0.12);
+  color: var(--danger);
+}
+
+.chip-muted {
+  background: rgba(16, 36, 28, 0.05);
+  color: var(--muted);
+}
+
 .attempt-card.is-flagged {
   border-color: rgba(180, 35, 24, 0.4);
   box-shadow: inset 4px 0 0 var(--danger), 0 8px 24px rgba(180, 35, 24, 0.08);
@@ -820,8 +854,9 @@ button {
 .summary-plain {
   margin: 0;
   color: var(--ink);
-  line-height: 1.55;
-  max-width: 60ch;
+  line-height: 1.4;
+  font-size: 0.92rem;
+  max-width: 48ch;
 }
 
 .score-box {

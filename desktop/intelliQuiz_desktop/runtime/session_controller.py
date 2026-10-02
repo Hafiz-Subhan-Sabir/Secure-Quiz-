@@ -701,6 +701,8 @@ class SessionController:
         self._refresh_pause_state()
         if self.state.quiz_paused:
             raise RuntimeError(self.state.pause_reason or "Camera is still unavailable")
+        with self._lock:
+            self.state.student_alert = ""
         return {"ok": True, "quiz_paused": False}
 
     def mark_phone_paired(self) -> dict[str, Any]:
@@ -846,20 +848,27 @@ class SessionController:
                     )
             enriched.setdefault(
                 "plain_language",
-                "Student phone camera issue (moved away / switched app). "
-                "Marked as a cheating attempt for admin review.",
+                "Phone camera moved away or left the exam page.",
             )
             enriched.setdefault("cheating_attempt", True)
             enriched.setdefault("flag", "phone_helper_app")
-            plain = str(enriched["plain_language"])
             if self.state.phase == "exam" and severity >= 0.6:
                 with self._lock:
                     self.state.quiz_paused = True
-                    self.state.pause_reason = plain
-                    self.state.student_alert = "⚠ WARNING: " + plain
+                    self.state.pause_reason = (
+                        "Phone camera moved or left. Keep the IntelliQuiz camera page open."
+                    )
+                    self.state.student_alert = (
+                        "Phone camera issue — keep the page open and steady."
+                    )
+            elif self.state.phase == "exam" and severity >= 0.45:
+                with self._lock:
+                    self.state.student_alert = (
+                        "Phone camera warning — photo saved for admin review."
+                    )
         elif self.state.phase == "exam" and severity >= 0.45:
             with self._lock:
-                self.state.student_alert = "⚠ WARNING: " + plain + " A photo was saved for admin review."
+                self.state.student_alert = plain[:120] if plain else "Warning — photo saved for admin review."
         self._append(typ, severity, enriched)
 
     def _on_paired(self) -> None:
@@ -884,7 +893,7 @@ class SessionController:
             ):
                 self.state.quiz_paused = True
                 self.state.pause_reason = (
-                    "Phone camera disconnected. Scan the QR again and allow camera access to continue."
+                    "Phone disconnected. Scan QR again and allow camera."
                 )
         self._append(
             "no_face",
@@ -916,8 +925,7 @@ class SessionController:
                 self.state.quiz_paused = True
                 self.state.android_paired = False
                 self.state.pause_reason = (
-                    "Phone camera is required. Open the IntelliQuiz app on your phone, "
-                    "keep the camera page open, and wait until it says Paired."
+                    "Phone camera required. Open IntelliQuiz on phone → Allow camera → Wait for Paired."
                 )
             return
 
@@ -927,8 +935,7 @@ class SessionController:
                     self.state.quiz_paused = True
                     self.state.android_paired = False
                     self.state.pause_reason = (
-                        "Phone camera is required. Open the QR link on your phone, allow the camera, "
-                        "and wait until it says Paired."
+                        "Phone camera required. Open QR link → Allow camera → Wait for Paired."
                     )
                 else:
                     self.state.quiz_paused = False
@@ -943,7 +950,7 @@ class SessionController:
             if not ok:
                 self.state.quiz_paused = True
                 self.state.pause_reason = (
-                    "PC webcam was lost. Plug it back in / allow camera access, then continue."
+                    "PC webcam lost. Reconnect or allow camera, then continue."
                 )
             else:
                 self.state.quiz_paused = False
@@ -964,7 +971,7 @@ class SessionController:
                 return
             self.state.quiz_paused = True
             self.state.pause_reason = (
-                f"Exam paused — another app took focus ({process_name}). Return to the exam window."
+                f"Another app took focus ({process_name}). Return to the exam."
             )
         self._append(
             "app_violation",
@@ -992,13 +999,10 @@ class SessionController:
             if self.state.phase == "exam" and hits:
                 self.state.quiz_paused = True
                 self.state.pause_reason = (
-                    "Exam paused — prohibited app detected (Chrome/Edge/helper). "
-                    "Close other apps and return to the exam window."
+                    "Prohibited app detected. Close Chrome/Edge/helpers and return here."
                 )
                 self.state.student_alert = (
-                    "⚠ WARNING: Prohibited app detected: "
-                    + ", ".join(names)
-                    + ". Photo + screen saved for admin. Other browsers were closed."
+                    "Prohibited app: " + ", ".join(names) + ". Photo saved for admin."
                 )
         payload: dict[str, Any] = {
             "hits": [{"name": h.name, "pid": h.pid, "category": h.category} for h in hits],

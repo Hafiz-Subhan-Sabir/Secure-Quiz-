@@ -52,17 +52,10 @@ def _compute_cheating_probability(severities: list[float], last_risk: float) -> 
 
 def _summary_plain(prob: float, flags: list[str], evidence_n: int) -> str:
     if prob < 0.35 and not flags:
-        return "This attempt looks normal. Face stayed visible and no strong warning signals were saved."
+        return "Looks normal — no strong warnings."
     if prob < 0.65:
-        return (
-            f"This attempt needs a light review. We saved {evidence_n} camera photo(s) "
-            "when something looked unusual. Open the photos below to decide."
-        )
-    return (
-        f"This attempt is high risk ({int(prob * 100)}% integrity concern). "
-        f"Abnormal face gestures or room alerts triggered {evidence_n} automatic photo capture(s). "
-        "Review each photo before accepting the score."
-    )
+        return f"Needs light review · {evidence_n} photo(s)."
+    return f"High risk ({int(prob * 100)}%) · {evidence_n} photo(s) — review before accepting."
 
 
 @router.get("/sessions/{session_id}", response_model=IntegrityReport)
