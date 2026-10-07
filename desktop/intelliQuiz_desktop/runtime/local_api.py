@@ -191,7 +191,14 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
 
     @app.get("/api/camera.jpg")
     def camera_jpeg() -> Response:
+        # Prefer PC webcam; if student paired by phone (or webcam is busy/missing),
+        # fall back to the latest phone frame so the UI does not spam 404.
         data = ctrl.monitor.latest_jpeg()
+        if not data:
+            try:
+                data = ctrl.pairing.latest_jpeg()
+            except Exception:
+                data = None
         if not data:
             raise HTTPException(status_code=404, detail="No camera frame yet")
         return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
