@@ -11,44 +11,44 @@ const PRESETS: Record<
     warn: 0.55,
     flag: 0.8,
     terminate: 0.95,
-    requireAndroid: false,
-    blurb: "Gentle watch. Photos still save on strong alerts, but the quiz rarely stops early.",
+    requireAndroid: true,
+    blurb: "Soft checks. Phone still required. Photos on strong alerts.",
   },
   medium: {
     warn: 0.4,
     flag: 0.65,
     terminate: 0.9,
     requireAndroid: true,
-    blurb: "Recommended. Phone camera required. Unusual face gestures trigger photo capture.",
+    blurb: "Recommended. Phone required. Odd face moves save a photo.",
   },
   high: {
     warn: 0.3,
     flag: 0.55,
     terminate: 0.8,
     requireAndroid: true,
-    blurb: "Strict. Smaller gestures can raise concern and more photos are kept for review.",
+    blurb: "Strict. Smaller moves can raise risk and save more photos.",
   },
   lockdown: {
     warn: 0.2,
     flag: 0.4,
     terminate: 0.7,
     requireAndroid: true,
-    blurb: "Highest stakes. Very sensitive facial checks and room monitoring.",
+    blurb: "Strictest. Very sensitive face + room checks.",
   },
 };
 
 const CAPTURE_RULES = [
   {
-    title: "Laptop webcam (primary)",
-    body: "Reads face landmarks in real time (MediaPipe). Students enroll their face once per PC; each exam verifies identity match. Risky gestures trigger photo capture.",
+    title: "PC camera",
+    body: "Watches the face. Looking away or second person can save a photo.",
   },
   {
-    title: "Phone camera (secondary)",
-    body: "After QR pairing, the Android app watches the side/rear of the room. Unusual room movement saves an environment photo so the webcam’s blind spots are covered.",
+    title: "Phone camera (required)",
+    body: "Side/rear room view. Covering or moving the phone can pause the quiz and save proof.",
   },
   {
-    title: "What you see in Admin",
-    body: "Student attempts lists who took which quiz. Photo reports show the integrity % in plain words, plus a gallery of every auto-captured image.",
+    title: "Admin view",
+    body: "Risk %, short summary, and photo gallery for each student.",
   },
 ];
 

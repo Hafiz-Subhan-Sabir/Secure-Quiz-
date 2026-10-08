@@ -2,11 +2,19 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type AttemptSummary, type ExamSummary } from "@/shared/api/client";
 
+type AiMetrics = {
+  lab_accuracy_pct: number;
+  meets_90_target: boolean;
+  dataset_samples: number;
+  note: string;
+};
+
 export function OverviewPage() {
   const [exams, setExams] = useState<ExamSummary[]>([]);
   const [attempts, setAttempts] = useState<AttemptSummary[]>([]);
   const [apiOk, setApiOk] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ai, setAi] = useState<AiMetrics | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -23,9 +31,15 @@ export function OverviewPage() {
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
         setApiOk(false);
-        setError(err instanceof Error ? err.message : "Could not load the home screen.");
+        setError(err instanceof Error ? err.message : "Could not load home.");
       }
     })();
+    void fetch("/ai-metrics.json", { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: AiMetrics | null) => {
+        if (data) setAi(data);
+      })
+      .catch(() => undefined);
     return () => ac.abort();
   }, []);
 
@@ -34,99 +48,91 @@ export function OverviewPage() {
 
   return (
     <>
-      <section className="hero-banner">
-        <div>
-          <p className="hero-kicker">Built for clarity</p>
-          <h2>Watch every quiz with confidence</h2>
-          <p>
-            IntelliQuiz watches the student’s face on the laptop camera, pairs a phone camera for
-            room coverage, and <strong>automatically saves a photo</strong> when an abnormal face
-            gesture is detected (looking away, head shake, second person, and more).
-          </p>
-        </div>
-        <Link className="primary-btn" to="/attempts">
-          Check student attempts
+      <div className="metric-row visual-metrics">
+        <article className={`metric ${apiOk ? "tone-ok" : apiOk === false ? "tone-bad" : ""}`}>
+          <div className="metric-icon" aria-hidden>
+            <span className={`dot ${apiOk ? "on" : ""}`} />
+          </div>
+          <p className="label">Server</p>
+          <p className="value">{apiOk == null ? "…" : apiOk ? "Online" : "Down"}</p>
+        </article>
+        <article className="metric">
+          <div className="metric-icon" aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M8 4h8a2 2 0 0 1 2 2v14l-6-3-6 3V6a2 2 0 0 1 2-2z" />
+            </svg>
+          </div>
+          <p className="label">Live exams</p>
+          <p className="value">{published}</p>
+        </article>
+        <article className={`metric ${flagged ? "tone-warn" : "tone-ok"}`}>
+          <div className="metric-icon" aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="8" />
+              <path d="M12 8v5M12 16h.01" />
+            </svg>
+          </div>
+          <p className="label">Need review</p>
+          <p className="value">{flagged}</p>
+        </article>
+        <article className={`metric ${ai?.meets_90_target ? "tone-ok" : ""}`}>
+          <div className="metric-icon" aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="9" r="3.5" />
+              <path d="M6 19c1.2-3 3.5-4.5 6-4.5S16.8 16 18 19" />
+            </svg>
+          </div>
+          <p className="label">Face AI (lab)</p>
+          <p className="value">{ai ? `${ai.lab_accuracy_pct}%` : "—"}</p>
+        </article>
+      </div>
+
+      {ai ? <p className="status ai-note">{ai.note}</p> : null}
+      {error ? <p className="error-text">{error}</p> : null}
+
+      <section className="action-grid">
+        <Link className="action-card" to="/exams">
+          <span className="action-glyph">1</span>
+          <strong>Make exam</strong>
+          <span>Add questions · Publish</span>
+        </Link>
+        <Link className="action-card" to="/attempts">
+          <span className="action-glyph">2</span>
+          <strong>Check students</strong>
+          <span>Flags · photos · scores</span>
+        </Link>
+        <Link className="action-card" to="/reports">
+          <span className="action-glyph">3</span>
+          <strong>Open photos</strong>
+          <span>Webcam · phone · screen</span>
+        </Link>
+        <Link className="action-card" to="/proctoring">
+          <span className="action-glyph">?</span>
+          <strong>Rules</strong>
+          <span>When photos save</span>
         </Link>
       </section>
 
-      <div className="metric-row">
-        <article className="metric">
-          <p className="label">System</p>
-          <p className="value">{apiOk == null ? "…" : apiOk ? "Ready" : "Offline"}</p>
-        </article>
-        <article className="metric">
-          <p className="label">Published exams</p>
-          <p className="value">{published}</p>
-        </article>
-        <article className="metric">
-          <p className="label">Attempts needing review</p>
-          <p className="value">{flagged}</p>
-        </article>
-      </div>
-
-      {error ? <p className="error-text">{error}</p> : null}
-
-      <section className="panel guide-panel">
-        <h2>How to run a secure quiz (simple steps)</h2>
-        <ol className="guide-steps">
-          <li>
-            <strong>Create an exam</strong> on the Exams page, then click <em>Publish</em> so
-            students can see it.
-          </li>
-          <li>
-            <strong>Student opens the Desktop app</strong>, signs in, and must pass a camera check
-            (PC webcam with one face, or phone camera via QR if there is no webcam).
-          </li>
-          <li>
-            <strong>During the quiz</strong>, AI watches face gestures. Rule breaks capture a webcam
-            photo and screen snapshot, synced for your review.
-          </li>
-          <li>
-            <strong>You review here</strong>: open Attempts &amp; flags → pick a student → see risk,
-            timeline, and the photo gallery.
-          </li>
-        </ol>
+      <section className="panel" style={{ marginTop: "1rem" }}>
+        <h2>During a quiz</h2>
+        <div className="icon-row">
+          <div className="icon-pill">
+            <span className="ip-dot ok" /> PC face
+          </div>
+          <div className="icon-pill">
+            <span className="ip-dot ok" /> Phone room
+          </div>
+          <div className="icon-pill">
+            <span className="ip-dot warn" /> Blocked apps
+          </div>
+          <div className="icon-pill">
+            <span className="ip-dot bad" /> Auto photo
+          </div>
+        </div>
+        <p className="status" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+          Phone pairing is required. If the phone leaves, the quiz pauses and a photo can be saved.
+        </p>
       </section>
-
-      <div className="split-2">
-        <section className="panel">
-          <h2>What gets photographed automatically?</h2>
-          <ul className="plain-list">
-            <li>Head shaking or looking around the room</li>
-            <li>Wink + head tilt (strong “looking away” signal)</li>
-            <li>Mouth open for a long time (possible talking)</li>
-            <li>Second face appearing in the webcam</li>
-            <li>Unusual movement in the phone’s room camera</li>
-          </ul>
-          <Link className="text-link" to="/proctoring">
-            Read the face & camera rules →
-          </Link>
-        </section>
-
-        <section className="panel">
-          <h2>Quick links</h2>
-          <ul className="list-plain">
-            <li>
-              <span>Publish an exam for students</span>
-              <Link className="ghost-btn compact" to="/exams">
-                Exams
-              </Link>
-            </li>
-            <li>
-              <span>Review flagged students &amp; photos</span>
-              <Link className="ghost-btn compact" to="/attempts">
-                Attempts &amp; flags
-              </Link>
-            </li>
-            <li>
-              <span>Open a full photo report</span>
-              <Link className="ghost-btn compact" to="/reports">
-                Reports
-              </Link>
-            </li>
-          </ul>
-        </section>
-      </div>
     </>
   );
 }

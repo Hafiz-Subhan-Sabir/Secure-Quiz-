@@ -124,11 +124,28 @@ def sync_events(
         answers = submit_payload.get("answers") or {}
         if isinstance(answers, dict):
             _grade_submit(db, session, answers)
+        # Keep typed student name on the session for admin lists/reports.
+        name = str(submit_payload.get("student_name") or "").strip()
+        if name and not (getattr(session, "display_name", None) or "").strip():
+            session.display_name = name[:200]
 
     if to_insert:
         peak = max(c["severity"] for c in to_insert)
         if peak > session.last_risk_score:
             session.last_risk_score = peak
+        # Backfill display_name + phone paired from event payloads.
+        for c in to_insert:
+            try:
+                payload = json.loads(c["payload_json"] or "{}")
+            except Exception:
+                continue
+            name = str(payload.get("student_name") or "").strip()
+            if name and not (getattr(session, "display_name", None) or "").strip():
+                session.display_name = name[:200]
+            if payload.get("android_paired") is True:
+                session.android_paired = True
+            if c["type"] == "heartbeat" and payload.get("source") == "android_paired":
+                session.android_paired = True
 
     db.commit()
     return SyncResult(accepted=len(to_insert), duplicates=duplicates, rejected=rejected)

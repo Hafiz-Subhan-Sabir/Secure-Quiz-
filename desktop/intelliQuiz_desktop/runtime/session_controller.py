@@ -274,14 +274,18 @@ class SessionController:
         return verify(enrolled, sample, threshold=self.settings.identity_match_threshold)
 
     # ── auth / exam bootstrap ──────────────────────────────────────────
-    def login(self, email: str, password: str) -> dict[str, Any]:
+    def login(self, email: str, password: str, *, display_name: str = "") -> dict[str, Any]:
         data = self.api.login(email, password)
         if data.get("role") != "student":
             raise PermissionError("Desktop exam client is for students only. Use Admin Web for staff.")
+        typed_name = (display_name or "").strip()
+        account_name = str(data.get("full_name") or "").strip()
+        # Prefer the name the student typed (what admins should see on reports).
+        shown_name = typed_name or account_name or email.split("@")[0]
         with self._lock:
             self.state.phase = "login"
             self.state.email = email
-            self.state.full_name = str(data.get("full_name") or "")
+            self.state.full_name = shown_name
             self.state.role = data["role"]
             self.state.error = ""
             self.state.identity_deferred_phone = False
@@ -292,13 +296,34 @@ class SessionController:
             "full_name": self.state.full_name,
         }
 
+    def _may_capture_screenshots(self) -> bool:
+        """Screenshots only after the quiz has started (phone already paired)."""
+        with self._lock:
+            return self.state.phase == "exam"
+
+    def _try_screen_capture(self) -> str | None:
+        if not self._may_capture_screenshots():
+            return None
+        try:
+            from intelliQuiz_desktop.runtime.evidence import capture_screen_data_uri
+
+            return capture_screen_data_uri()
+        except Exception:
+            return None
+
     def list_exams(self) -> list[dict[str, Any]]:
         return self.api.list_exams()
 
     def start_exam(self, exam_id: str) -> dict[str, Any]:
         exam_meta = self.api.get_exam(exam_id)
         paper = self.api.get_exam_paper(exam_id)
-        session = self.api.create_session(exam_id, device_fingerprint())
+        with self._lock:
+            display_name = self.state.full_name
+        session = self.api.create_session(
+            exam_id,
+            device_fingerprint(),
+            display_name=display_name,
+        )
 
         profile_id = exam_meta.get("proctoring_profile_id")
         if profile_id:
@@ -830,14 +855,9 @@ class SessionController:
         # Phone left the exam camera app — attach PC screen snapshot for admin review.
         if label in {"PHONE_APP_SWITCH", "PHONE_HELPER", "APP_SWITCH", "PHONE_MOTION"} or typ == "android_env_anomaly":
             if not enriched.get("screen_image_data_uri"):
-                try:
-                    from intelliQuiz_desktop.runtime.evidence import capture_screen_data_uri
-
-                    screen = capture_screen_data_uri()
-                    if screen:
-                        enriched["screen_image_data_uri"] = screen
-                except Exception:
-                    pass
+                screen = self._try_screen_capture()
+                if screen:
+                    enriched["screen_image_data_uri"] = screen
             if not enriched.get("image_data_uri"):
                 jpeg = self.pairing.latest_jpeg()
                 if jpeg:
@@ -893,18 +913,29 @@ class SessionController:
             ):
                 self.state.quiz_paused = True
                 self.state.pause_reason = (
-                    "Phone disconnected. Scan QR again and allow camera."
+                    "Phone disconnected. Open IntelliQuiz on phone, scan QR again, keep page open."
                 )
-        self._append(
-            "no_face",
-            0.7,
-            {
-                "source": "android_camera",
-                "plain_language": "Phone camera disconnected during the exam.",
-                "gesture_label": "PHONE_LOST",
-                "cheating_attempt": True,
-            },
-        )
+                self.state.student_alert = "Phone camera lost — quiz paused. Re-pair to continue."
+
+        enriched: dict[str, Any] = {
+            "source": "android_camera",
+            "plain_language": "Phone camera disconnected during the exam (cheating risk).",
+            "gesture_label": "PHONE_LOST",
+            "cheating_attempt": True,
+            "flag": "phone_disconnected",
+        }
+        # Capture PC screen + last phone frame for admin (exam only).
+        screen = self._try_screen_capture()
+        if screen:
+            enriched["screen_image_data_uri"] = screen
+        jpeg = self.pairing.latest_jpeg() or self.monitor.latest_jpeg()
+        if jpeg:
+            import base64
+
+            enriched["image_data_uri"] = (
+                "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
+            )
+        self._append("no_face", 0.85, enriched)
 
     def _refresh_pause_state(self) -> None:
         """Pause the quiz when the identity camera is gone; clear pause when it returns."""
@@ -991,47 +1022,42 @@ class SessionController:
             self.state.pause_reason = ""
 
     def _on_app_violation(self, hits: list[ProcessHit], killed: list[str]) -> None:
+        # No cheating evidence / screenshots until the quiz has started.
+        if not self._may_capture_screenshots() or not hits:
+            return
         hard = [h for h in hits if h.category == "hard"]
         browsers = [h for h in hits if h.category == "browser"]
         severity = 0.9 if hard else (0.8 if browsers else 0.55)
         names = sorted({h.name for h in hits})
         with self._lock:
-            if self.state.phase == "exam" and hits:
-                self.state.quiz_paused = True
-                self.state.pause_reason = (
-                    "Prohibited app detected. Close Chrome/Edge/helpers and return here."
-                )
-                self.state.student_alert = (
-                    "Prohibited app: " + ", ".join(names) + ". Photo saved for admin."
-                )
+            self.state.quiz_paused = True
+            self.state.pause_reason = (
+                "Prohibited app detected. Close Chrome/Edge/helpers and return here."
+            )
+            self.state.student_alert = (
+                "Prohibited app: " + ", ".join(names) + ". Photo saved for admin."
+            )
         payload: dict[str, Any] = {
             "hits": [{"name": h.name, "pid": h.pid, "category": h.category} for h in hits],
             "killed": killed,
             "plain_language": (
-                "Blocked / flagged app activity during exam: " + ", ".join(names)
-                + ". Webcam photo and screen snapshot saved for admin review."
+                "Blocked app during exam: " + ", ".join(names) + ". Photo saved for admin."
             ),
             "source": "desktop_app_lock",
             "gesture_label": "APP_VIOLATION",
             "cheating_attempt": True,
             "flag": "prohibited_app",
         }
-        # Always try to attach evidence (works offline; syncs when Railway is reachable).
-        try:
-            from intelliQuiz_desktop.runtime.evidence import capture_screen_data_uri
-
-            screen = capture_screen_data_uri()
-            if screen:
-                payload["screen_image_data_uri"] = screen
-        except Exception:
-            pass
+        screen = self._try_screen_capture()
+        if screen:
+            payload["screen_image_data_uri"] = screen
         try:
             jpeg = self.monitor.latest_jpeg()
             if jpeg:
                 import base64
 
-                payload["image_data_uri"] = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode(
-                    "ascii"
+                payload["image_data_uri"] = (
+                    "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
                 )
         except Exception:
             pass

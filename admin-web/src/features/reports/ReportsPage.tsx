@@ -101,10 +101,10 @@ export function ReportsPage() {
             <div className="attempt-top">
               <div>
                 <h2 style={{ margin: 0, color: needsReview ? "var(--danger)" : "var(--ok)" }}>
-                  {needsReview ? "Review needed" : "Looks clean"}
+                  {needsReview ? "Please review" : "Looks fine"}
                 </h2>
                 <p className="status" style={{ marginTop: "0.35rem" }}>
-                  {report.student_name} · {report.exam_title}
+                  <strong>{report.student_name || "Student"}</strong> · {report.exam_title}
                 </p>
               </div>
               <span className={`pill risk-${pct >= 65 ? "high" : pct >= 40 ? "mid" : "ok"}`}>
@@ -119,7 +119,7 @@ export function ReportsPage() {
                     </span>
                   ))
                 : (
-                  <span className="chip chip-ok">No flags</span>
+                  <span className="chip chip-ok">No warnings</span>
                 )}
               <span className="chip">{report.evidence.length} photo(s)</span>
               {report.quiz_max_score ? (
@@ -129,6 +129,7 @@ export function ReportsPage() {
               ) : null}
             </div>
             <p className="summary-plain" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+              <strong>Summary: </strong>
               {report.summary_plain}
             </p>
           </section>
@@ -144,7 +145,9 @@ export function ReportsPage() {
                     <figure className="evidence-stage">
                       <img src={active.image_data_uri} alt={active.plain_language} />
                       <figcaption>
-                        <strong>{active.gesture_label}</strong> · {sourceLabel(active.source)}
+                        <strong>{sourceLabel(active.source)}</strong>
+                        <br />
+                        {active.plain_language}
                         <br />
                         <span className="status">{formatWhen(active.captured_at)}</span>
                       </figcaption>
@@ -173,9 +176,8 @@ export function ReportsPage() {
               <h2>Timeline</h2>
               <div className="timeline">
                 {report.timeline.map((item) => {
-                  const label = String(item.gesture_label || item.type || "event");
-                  const short =
-                    label.length > 28 ? label.slice(0, 25) + "…" : label.replace(/_/g, " ");
+                  const plain = String(item.plain_language || item.gesture_label || item.type || "event");
+                  const short = plain.length > 64 ? plain.slice(0, 61) + "…" : plain;
                   return (
                     <div className="timeline-item" key={String(item.event_id)}>
                       <span className="status">{formatWhen(String(item.ts))}</span>

@@ -346,7 +346,7 @@
               try { ws.send(buf); } catch { /* ignore */ }
             });
           }, "image/jpeg", 0.55);
-        }, 2000);
+        }, 750);
       }
 
       let lastMotionSample = null;
@@ -435,7 +435,7 @@
       };
 
       // Motion check while paired
-      setInterval(sampleMotion, 1500);
+      setInterval(sampleMotion, 900);
 
       if (sessionId && token && wsUrl) {
         startCamera();

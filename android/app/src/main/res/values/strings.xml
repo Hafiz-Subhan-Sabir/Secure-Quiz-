@@ -4,5 +4,5 @@
     <string name="scan_qr">Scan Desktop QR</string>
     <string name="scan_prompt">Point at the QR code on your desktop exam screen</string>
     <string name="start_monitor">Start environmental monitor</string>
-    <string name="scan_instructions">1. On the exam PC, open the phone QR step.\n2. Scan the QR with this phone (Camera / Chrome).\n3. If asked, tap Advanced → Proceed for the security warning.\n4. Tap Allow for camera and keep this screen open.\n\nThis app also opens the QR https link directly and locks into camera mode.</string>
+    <string name="scan_instructions">Phone camera is required for every exam.\n\n1. On the exam PC, open the phone QR step.\n2. Tap Scan Desktop QR below (or use Chrome to scan).\n3. Allow camera when asked.\n4. Wait until it says Paired — keep this app open.\n\nPhone + PC must be on the same Wi‑Fi (not guest / mobile data).</string>
 </resources>

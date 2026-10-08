@@ -4,15 +4,23 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
+import android.net.http.SslError
 import android.os.Bundle
+import android.view.Gravity
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.PermissionRequest
+import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,23 +32,45 @@ import com.intelliquiz.mobile.camera.EnvironmentalMonitor
 import com.intelliquiz.mobile.pairing.PairingPayload
 import com.intelliquiz.mobile.transport.DesktopBridge
 import org.json.JSONObject
+import java.net.InetAddress
 
 /**
  * Phone camera client for IntelliQuiz exams.
  *
- * Desktop QR encodes https://LAN:8767/phone?... — scan or open deep link,
- * connect Desktop WS bridge, then load the phone camera WebView.
- *
- * Leaving this app during a paired exam (opening ChatGPT, WhatsApp, etc.)
- * reports a cheating attempt to desktop → admin evidence.
+ * Desktop QR encodes https://LAN:8767/phone?... — scan, trust local cert in WebView,
+ * connect Desktop WSS bridge, keep this app open during the exam.
  */
 class MainActivity : AppCompatActivity() {
     private var webView: WebView? = null
+    private var statusView: TextView? = null
     private var pendingUrl: String? = null
     private var bridge: DesktopBridge? = null
     private val envMonitor = EnvironmentalMonitor()
     private var examCameraActive = false
     private var lastAppSwitchReportAt = 0L
+    private var envWatchStarted = false
+    private val envWatchHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val envWatchRunnable = object : Runnable {
+        override fun run() {
+            if (examCameraActive && envMonitor.paired) {
+                reportEnvAnomalyIfNeeded()
+            }
+            if (envWatchStarted) {
+                envWatchHandler.postDelayed(this, 2500L)
+            }
+        }
+    }
+
+    private fun startEnvWatch() {
+        if (envWatchStarted) return
+        envWatchStarted = true
+        envWatchHandler.postDelayed(envWatchRunnable, 2500L)
+    }
+
+    private fun stopEnvWatch() {
+        envWatchStarted = false
+        envWatchHandler.removeCallbacks(envWatchRunnable)
+    }
 
     private val cameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -49,7 +79,7 @@ class MainActivity : AppCompatActivity() {
         if (granted && url != null) {
             openCameraWebView(url)
         } else {
-            showInstructions("Camera permission is required for exam proctoring.")
+            showInstructions("Camera permission is required. Tap Allow, then scan again.")
         }
     }
 
@@ -64,7 +94,7 @@ class MainActivity : AppCompatActivity() {
         }
         val payload = PairingPayload.tryParseQrText(raw)
         if (payload == null) {
-            showInstructions("Could not read that QR code. Scan the code shown on your desktop exam screen.")
+            showInstructions("Could not read that QR. Use the QR shown on the exam PC screen.")
             return@registerForActivityResult
         }
         connectBridge(payload)
@@ -94,7 +124,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // Student left IntelliQuiz (opened another app / home screen) while paired.
         if (examCameraActive && envMonitor.paired) {
             reportPhoneAppSwitch()
         }
@@ -111,6 +140,31 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {
                 /* ignore */
             }
+            reportEnvAnomalyIfNeeded()
+        }
+    }
+
+    private fun reportEnvAnomalyIfNeeded() {
+        if (!envMonitor.paired) return
+        val hint = envMonitor.consumeAnomaly() ?: return
+        val plain = when (hint) {
+            "covered_or_away" ->
+                "Phone camera looks covered or pointing away."
+            "sudden_move" ->
+                "Phone camera moved suddenly during the exam."
+            else -> "Phone room camera warning."
+        }
+        val payload = JSONObject()
+            .put("type", "env_anomaly")
+            .put("severity", 0.82)
+            .put("gesture_label", "PHONE_MOTION")
+            .put("plain_language", plain)
+            .put("source", "android_native")
+        try {
+            bridge?.send(payload.toString())
+            setStatus(plain)
+        } catch (_: Exception) {
+            /* ignore */
         }
     }
 
@@ -168,11 +222,10 @@ class MainActivity : AppCompatActivity() {
             }
             setTextColor(0xFFE8EEF4.toInt())
             textSize = 16f
-            setPadding(0, 32, 0, 0)
+            setPadding(0, 32, 0, 48)
         }
         val scanBtn = Button(this).apply {
             text = getString(R.string.scan_qr)
-            setPadding(0, 48, 0, 0)
             setOnClickListener { launchQrScan() }
         }
         root.addView(title)
@@ -202,15 +255,36 @@ class MainActivity : AppCompatActivity() {
                     .put("pairing_token", payload.pairingToken)
                     .put("source", "android_native")
                 bridge?.send(hello.toString())
-                runOnUiThread { envMonitor.start(this@MainActivity) }
-            },
-            onMessage = { msg ->
-                if (msg.contains("paired")) {
-                    runOnUiThread { envMonitor.markPaired() }
+                runOnUiThread {
+                    envMonitor.start(this@MainActivity)
+                    setStatus("Linked to exam PC — keep this screen open")
+                    startEnvWatch()
                 }
             },
-            onClose = { _, _ -> envMonitor.stop() },
-            onError = { _ -> envMonitor.stop() },
+            onMessage = { msg ->
+                if (msg.contains("pair_ok") || msg.contains("\"paired\"")) {
+                    runOnUiThread {
+                        envMonitor.markPaired()
+                        setStatus("Paired ✓ — leave this app open during the exam")
+                    }
+                } else if (msg.contains("pair_fail")) {
+                    runOnUiThread {
+                        setStatus("Pairing failed — scan the QR again from the PC")
+                    }
+                }
+            },
+            onClose = { _, reason ->
+                envMonitor.stop()
+                runOnUiThread {
+                    setStatus("Connection lost — reconnecting… ${reason.take(40)}")
+                }
+            },
+            onError = { ex ->
+                envMonitor.stop()
+                runOnUiThread {
+                    setStatus("Cannot reach exam PC. Same Wi‑Fi? ${ex.message ?: ""}")
+                }
+            },
         )
         bridge?.connect()
     }
@@ -236,29 +310,115 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun openCameraWebView(url: String) {
         examCameraActive = true
+        val root = FrameLayout(this)
         val wv = WebView(this)
         webView = wv
         val settings: WebSettings = wv.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
-        wv.webViewClient = WebViewClient()
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+        val status = TextView(this).apply {
+            text = "Opening exam camera…"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xCC0A1612.toInt())
+            setPadding(28, 24, 28, 24)
+            textSize = 14f
+            gravity = Gravity.CENTER
+        }
+        statusView = status
+
+        wv.webViewClient = object : WebViewClient() {
+            override fun onReceivedSslError(
+                view: WebView?,
+                handler: SslErrorHandler?,
+                error: SslError?,
+            ) {
+                // Desktop exam uses a self-signed LAN certificate. Accept only private LAN hosts.
+                val host = try {
+                    Uri.parse(view?.url ?: url).host.orEmpty()
+                } catch (_: Exception) {
+                    ""
+                }
+                if (isPrivateLanHost(host)) {
+                    setStatus("Trusted exam PC certificate — loading camera…")
+                    handler?.proceed()
+                } else {
+                    handler?.cancel()
+                    setStatus("Blocked unsafe certificate. Scan the QR from your exam PC.")
+                    showInstructions("Unsafe link. Scan only the QR shown on the exam computer.")
+                }
+            }
+
+            override fun onPageFinished(view: WebView?, loadedUrl: String?) {
+                setStatus("Camera page loaded — tap Allow if asked, wait for Paired")
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?,
+            ) {
+                if (request?.isForMainFrame == true) {
+                    setStatus(
+                        "Cannot open exam page. Same Wi‑Fi as PC? " +
+                            (error?.description?.toString() ?: ""),
+                    )
+                }
+            }
+        }
         wv.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
                 request?.grant(request.resources)
             }
         }
-        setContentView(wv)
+
+        root.addView(
+            wv,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        root.addView(
+            status,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM,
+            ),
+        )
+        setContentView(root)
         wv.loadUrl(url)
+    }
+
+    private fun setStatus(text: String) {
+        statusView?.text = text
+    }
+
+    private fun isPrivateLanHost(host: String): Boolean {
+        if (host.isBlank()) return false
+        return try {
+            val addr = InetAddress.getByName(host)
+            addr.isSiteLocalAddress || addr.isLoopbackAddress || addr.isLinkLocalAddress
+        } catch (_: Exception) {
+            host.startsWith("192.168.") ||
+                host.startsWith("10.") ||
+                host.startsWith("172.") ||
+                host == "localhost"
+        }
     }
 
     override fun onDestroy() {
         examCameraActive = false
+        stopEnvWatch()
         envMonitor.stop()
         bridge?.close()
         bridge = null
         webView?.destroy()
         webView = null
+        statusView = null
         super.onDestroy()
     }
 

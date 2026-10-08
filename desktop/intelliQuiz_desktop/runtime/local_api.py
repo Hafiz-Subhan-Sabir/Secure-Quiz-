@@ -19,6 +19,7 @@ UI_DIR = Path(__file__).resolve().parents[1] / "ui"
 class LoginBody(BaseModel):
     email: str
     password: str
+    display_name: str = ""
 
 
 class StartExamBody(BaseModel):
@@ -60,7 +61,7 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
     @app.post("/api/login")
     def login(body: LoginBody) -> dict[str, Any]:
         try:
-            return ctrl.login(body.email, body.password)
+            return ctrl.login(body.email, body.password, display_name=body.display_name)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except Exception as exc:

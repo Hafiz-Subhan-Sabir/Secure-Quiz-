@@ -1,8 +1,9 @@
+import json
 import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_roles
@@ -15,6 +16,28 @@ from app.modules.schemas import (
     SessionResponse,
     StudentAttemptResult,
 )
+
+
+def _attempt_student_name(session: ExamSession, student: User, db: Session) -> str:
+    display = (getattr(session, "display_name", None) or "").strip()
+    if display and display.lower() not in {"demo student", "student"}:
+        return display
+    # Fall back to name carried on recent integrity events (typed on desktop).
+    rows = db.scalars(
+        select(IntegrityEvent)
+        .where(IntegrityEvent.session_id == session.id)
+        .order_by(IntegrityEvent.ts.desc())
+        .limit(25)
+    ).all()
+    for e in rows:
+        try:
+            payload = json.loads(e.payload_json or "{}")
+        except Exception:
+            continue
+        name = str(payload.get("student_name") or "").strip()
+        if name and name.lower() not in {"demo student", "student"}:
+            return name
+    return display or student.full_name or "Student"
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -31,11 +54,13 @@ def create_session(
     if exam.status != "published" and claims.get("role") != "admin":
         raise HTTPException(status_code=400, detail="Exam is not published")
 
+    display = (body.display_name or "").strip()[:200]
     session = ExamSession(
         exam_id=exam.id,
         student_id=claims["sub"],
         status="active",
         device_fingerprint=body.device_fingerprint,
+        display_name=display,
         pairing_token=secrets.token_urlsafe(24),
     )
     db.add(session)
@@ -74,7 +99,10 @@ def list_attempts(
                 .where(
                     IntegrityEvent.session_id == session.id,
                     IntegrityEvent.type != "heartbeat",
-                    IntegrityEvent.payload_json.like("%image_data_uri%"),
+                    or_(
+                        IntegrityEvent.payload_json.like("%image_data_uri%"),
+                        IntegrityEvent.payload_json.like("%screen_image_data_uri%"),
+                    ),
                 )
             )
             or 0
@@ -82,7 +110,7 @@ def list_attempts(
         out.append(
             AttemptSummary(
                 session_id=session.id,
-                student_name=student.full_name,
+                student_name=_attempt_student_name(session, student, db),
                 student_email=student.email,
                 exam_title=exam.title,
                 status=session.status,

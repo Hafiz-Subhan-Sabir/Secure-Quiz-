@@ -22,7 +22,7 @@ export function AttemptsPage() {
       })
       .catch((err: unknown) => {
         if ((err as Error).name === "AbortError") return;
-        setError(err instanceof Error ? err.message : "Could not load attempts.");
+        setError(err instanceof Error ? err.message : "Could not load students.");
       });
     return () => ac.abort();
   }, []);
@@ -35,10 +35,6 @@ export function AttemptsPage() {
 
   return (
     <>
-      <p className="section-lead">
-        Open a flagged student → review photos → decide.
-      </p>
-
       <div className="toolbar">
         <div className="seg">
           <button
@@ -53,7 +49,7 @@ export function AttemptsPage() {
             className={filter === "flagged" ? "seg-on" : ""}
             onClick={() => setFilter("flagged")}
           >
-            Needs review ({flaggedCount})
+            Review ({flaggedCount})
           </button>
         </div>
       </div>
@@ -69,29 +65,30 @@ export function AttemptsPage() {
               <div className="attempt-top">
                 <div>
                   <h3>{a.student_name}</h3>
-                  <p className="status">{a.student_email}</p>
+                  <p className="status">{a.exam_title}</p>
                 </div>
                 <span className={`pill risk-${riskTier}`}>
                   {riskLabel(risk)} · {Math.round(risk * 100)}%
                 </span>
               </div>
-              <p className="attempt-exam">{a.exam_title}</p>
 
               <div className="chip-row">
                 {a.flagged ? (
-                  <span className="chip chip-danger">Review needed</span>
+                  <span className="chip chip-danger">Needs review</span>
                 ) : (
-                  <span className="chip chip-ok">Clear</span>
+                  <span className="chip chip-ok">OK</span>
                 )}
-                <span className="chip">
-                  {a.evidence_count > 0 ? `${a.evidence_count} photo(s)` : "No photos"}
+                <span className="chip vis-chip">
+                  <span className="mini-cam" aria-hidden />
+                  {a.evidence_count} photos
                 </span>
                 <span className={`chip ${a.android_paired ? "chip-ok" : "chip-muted"}`}>
-                  Phone {a.android_paired ? "paired" : "off"}
+                  <span className={`mini-phone ${a.android_paired ? "on" : ""}`} aria-hidden />
+                  Phone {a.android_paired ? "on" : "off"}
                 </span>
                 {a.quiz_max_score ? (
                   <span className="chip">
-                    Score {a.quiz_score ?? 0}/{a.quiz_max_score}
+                    {a.quiz_score ?? 0}/{a.quiz_max_score}
                   </span>
                 ) : null}
               </div>
@@ -101,13 +98,13 @@ export function AttemptsPage() {
               </p>
 
               <Link className="primary-btn block" to={`/reports?session=${a.session_id}`}>
-                Review evidence
+                Open photos
               </Link>
             </article>
           );
         })}
         {!visible.length && !error ? (
-          <p className="empty-state">No attempts yet.</p>
+          <p className="empty-state">No students yet.</p>
         ) : null}
       </div>
     </>

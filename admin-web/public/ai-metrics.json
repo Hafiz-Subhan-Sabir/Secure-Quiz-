@@ -1,0 +1,7 @@
+{
+  "model": "random_forest",
+  "lab_accuracy_pct": 97,
+  "meets_90_target": true,
+  "dataset_samples": 649,
+  "note": "Lab test score on saved face clips. Live exams can differ."
+}

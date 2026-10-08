@@ -73,12 +73,24 @@ class ApiClient:
             r.raise_for_status()
             return r.json()
 
-    def create_session(self, exam_id: str, device_fingerprint: str) -> dict[str, Any]:
+    def create_session(
+        self,
+        exam_id: str,
+        device_fingerprint: str,
+        *,
+        display_name: str = "",
+    ) -> dict[str, Any]:
         with self._lock:
+            body: dict[str, Any] = {
+                "exam_id": exam_id,
+                "device_fingerprint": device_fingerprint,
+            }
+            if display_name.strip():
+                body["display_name"] = display_name.strip()[:200]
             r = self._client.post(
                 f"{self.base_url}/sessions",
                 headers=self._headers(),
-                json={"exam_id": exam_id, "device_fingerprint": device_fingerprint},
+                json=body,
             )
             r.raise_for_status()
             return r.json()

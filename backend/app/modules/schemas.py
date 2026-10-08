@@ -117,6 +117,7 @@ class ExamPaper(BaseModel):
 class SessionCreate(BaseModel):
     exam_id: str
     device_fingerprint: str = Field(min_length=4, max_length=255)
+    display_name: str = Field(default="", max_length=200)
 
 
 class SessionResponse(BaseModel):

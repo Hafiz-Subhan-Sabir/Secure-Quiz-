@@ -80,6 +80,7 @@ class ExamSession(Base):
     student_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     device_fingerprint: Mapped[str] = mapped_column(String(255), default="")
+    display_name: Mapped[str] = mapped_column(String(200), default="")
     pairing_token: Mapped[str] = mapped_column(String(64))
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

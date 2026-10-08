@@ -26,7 +26,8 @@ class SyncWorker:
         self.store = store
         self.api = api
         self.batch_size = batch_size
-        self.max_retries = 3
+        # More retries so offline queues survive short network drops.
+        self.max_retries = 6
 
     def flush(self, session_id: str) -> dict:
         batch = self.store.unsynced(session_id, limit=self.batch_size)

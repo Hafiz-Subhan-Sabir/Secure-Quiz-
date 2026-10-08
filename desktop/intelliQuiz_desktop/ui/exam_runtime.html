@@ -543,11 +543,11 @@
           <p class="meta" id="topMeta">Student exam · connecting…</p>
         </div>
         <div class="badge-row">
-          <span class="badge" id="bAi">AI</span>
-          <span class="badge" id="bFace">Face</span>
-          <span class="badge" id="bApps">Apps</span>
-          <span class="badge" id="bPhone">Phone</span>
-          <span class="badge" id="bRisk">Risk</span>
+          <span class="badge" id="bAi" title="Face AI">AI</span>
+          <span class="badge" id="bFace" title="PC camera">Face</span>
+          <span class="badge" id="bApps" title="App lock">Apps</span>
+          <span class="badge" id="bPhone" title="Phone room camera">Phone</span>
+          <span class="badge" id="bRisk" title="Integrity risk">Risk</span>
         </div>
       </header>
 
@@ -564,16 +564,20 @@
             <p class="now-doing" id="loginChip">Step 1 of 3 — Sign in</p>
             <p class="login-brand-line">IntelliQuiz</p>
             <h1 id="loginTitle">Sign in to start</h1>
-            <p class="lead" id="loginLead">Use your student account. Next you’ll pick an exam and check your camera.</p>
+            <p class="lead" id="loginLead">Enter your name, then sign in. Your name is what the admin will see on the report.</p>
 
             <div id="loginCreds">
               <div class="field">
+                <label for="displayName">Your name</label>
+                <input id="displayName" placeholder="Type your full name" autocomplete="name" />
+              </div>
+              <div class="field">
                 <label for="email">Email</label>
-                <input id="email" value="student@intelliquiz.dev" autocomplete="username" />
+                <input id="email" placeholder="student@example.com" autocomplete="username" />
               </div>
               <div class="field">
                 <label for="password">Password</label>
-                <input id="password" type="password" value="Student123!" autocomplete="current-password" />
+                <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
               </div>
             </div>
 
@@ -632,10 +636,7 @@
                 <button type="button" class="ghost" id="btnCopyUrl" style="margin-bottom:0.5rem">Copy phone link</button>
                 <p class="note" id="qrEndpoint">Same router / Wi‑Fi. Guest networks often fail.</p>
                 <button type="button" class="linkish" id="btnSwitchWebcam">← Back to PC webcam</button>
-                <details style="margin-top:0.75rem">
-                  <summary class="note" style="cursor:pointer">Lab only — no phone</summary>
-                  <button class="ghost" type="button" id="btnLabPair" style="margin-top:0.5rem">Mark phone paired (lab)</button>
-                </details>
+                <p class="note" style="margin-top:0.75rem"><strong>Phone pairing is required</strong> for every exam (with or without PC webcam).</p>
               </div>
               <p class="err hidden" id="setupErr"></p>
             </div>
@@ -749,7 +750,7 @@
 
       <!-- Sticky next-action bar -->
       <footer class="footer-bar" id="footerBar">
-        <p class="hint" id="footerHint"><strong>Next:</strong> Enter your email and password, then sign in.</p>
+        <p class="hint" id="footerHint"><strong>Next:</strong> Type your name, email, and password, then sign in.</p>
         <div class="footer-actions">
           <button class="ghost hidden" type="button" id="btnFooterSecondary"></button>
           <button class="primary" type="button" id="btnFooterPrimary">Sign in</button>
@@ -797,6 +798,7 @@
       let enrollMode = "webcam"; // webcam | phone
       let lastStatus = null;
       let autoPhoneSwitched = false;
+      let autoPhoneAfterFace = false;
       let advancing = false;
       let camFailStreak = 0;
       let quizPaused = false;
@@ -830,7 +832,7 @@
         $("enrollPhonePanel").classList.add("hidden");
         $("loginChip").textContent = "Step 1 of 3 — Sign in";
         $("loginTitle").textContent = "Sign in to start";
-        $("loginLead").textContent = "Use your student account. Next you’ll pick an exam and check your camera.";
+        $("loginLead").textContent = "Enter your name, then sign in. Your name is what the admin will see on the report.";
         $("loginErr").textContent = message || "Session expired — sign in again.";
         $("loginErr").classList.remove("hidden");
         $("topMeta").textContent = "Ready · sign in below";
@@ -1364,16 +1366,24 @@
         showPauseOverlay(st);
         syncFooter();
 
-        // Auto-route to phone when PC cam never comes up
-        if (phase === "setup" && setupMode === "webcam" && !mon.camera_ok) {
-          camFailStreak += 1;
-          if (!autoPhoneSwitched && camFailStreak >= 3) {
-            autoPhoneSwitched = true;
-            setSetupMode("phone");
-            $("setupErr").classList.add("hidden");
+        // Always require phone: no webcam → phone mode; webcam OK but unpaired → show QR
+        if (phase === "setup") {
+          const pairedNow = !!(st.android_paired || pair.paired);
+          if (setupMode === "webcam" && !mon.camera_ok) {
+            camFailStreak += 1;
+            if (!autoPhoneSwitched && camFailStreak >= 2) {
+              autoPhoneSwitched = true;
+              setSetupMode("phone");
+              $("setupErr").classList.add("hidden");
+            }
+          } else if (mon.camera_ok) {
+            camFailStreak = 0;
+            // Face OK — force phone QR once (phone is always compulsory)
+            if (!pairedNow && setupMode === "webcam" && !autoPhoneAfterFace) {
+              autoPhoneAfterFace = true;
+              setSetupMode("phone");
+            }
           }
-        } else if (mon.camera_ok) {
-          camFailStreak = 0;
         }
 
         if (phase === "exam") {
@@ -1578,11 +1588,22 @@
 
       async function doLogin() {
         $("loginErr").classList.add("hidden");
+        const displayName = ($("displayName").value || "").trim();
+        if (!displayName) {
+          $("loginErr").textContent = "Please type your name first.";
+          $("loginErr").classList.remove("hidden");
+          return;
+        }
         try {
           await api("/api/login", {
             method: "POST",
-            body: JSON.stringify({ email: $("email").value, password: $("password").value }),
+            body: JSON.stringify({
+              email: $("email").value,
+              password: $("password").value,
+              display_name: displayName,
+            }),
           });
+          $("topMeta").textContent = displayName + " · signed in";
           const id = await api("/api/identity/status");
           if (id.needs_enrollment) {
             loginPhase = "enroll";
@@ -1743,11 +1764,6 @@
       };
 
       $("warnOk").onclick = () => hideWarnPopup();
-
-      $("btnLabPair").onclick = async () => {
-        await api("/api/pairing/mark", { method: "POST" });
-        await pollStatus();
-      };
 
       $("btnSim").onclick = async () => {
         await api("/api/simulate-abnormal", { method: "POST" });
