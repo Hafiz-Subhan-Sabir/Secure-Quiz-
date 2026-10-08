@@ -251,7 +251,7 @@ export function formatWhen(iso: string): string {
 
 /** Short, simple admin summary even if the API still returns old long text. */
 export function shortSummary(
-  text: string,
+  _text: string,
   opts: { pct: number; photoCount: number; flags: string[] },
 ): string {
   const photos = opts.photoCount;
