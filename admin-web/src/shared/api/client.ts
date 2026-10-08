@@ -248,3 +248,60 @@ export function formatWhen(iso: string): string {
     return iso;
   }
 }
+
+/** Short, simple admin summary even if the API still returns old long text. */
+export function shortSummary(
+  text: string,
+  opts: { pct: number; photoCount: number; flags: string[] },
+): string {
+  const photos = opts.photoCount;
+  const flagBits: string[] = [];
+  for (const f of opts.flags) {
+    const fl = f.toLowerCase();
+    if (fl.includes("phone") || fl.includes("android") || fl.includes("no_face")) {
+      flagBits.push("phone / camera");
+    } else if (fl.includes("app")) {
+      flagBits.push("blocked app");
+    } else if (fl.includes("face") || fl.includes("gaze") || fl.includes("gesture")) {
+      flagBits.push("face");
+    }
+  }
+  const warnings = [...new Set(flagBits)].join(", ") || "none";
+  if (opts.pct < 35 && opts.flags.length === 0 && photos === 0) {
+    return "Looks fine. No strong cheating signs. You can accept the score.";
+  }
+  if (opts.pct < 65) {
+    return `Please check. Saved ${photos} photo(s). Warnings: ${warnings}. Open photos, then decide.`;
+  }
+  return `High concern (${Math.round(opts.pct)}% risk). Saved ${photos} photo(s). Warnings: ${warnings}. Review photos before accepting.`;
+}
+
+export function shortEventText(text: string): string {
+  const t = (text || "").trim();
+  const low = t.toLowerCase();
+  if (low.includes("left the") && low.includes("app")) return "Left the phone camera app.";
+  if (low.includes("phone") && (low.includes("moved") || low.includes("cover"))) {
+    return "Phone moved or covered.";
+  }
+  if (low.includes("phone") && (low.includes("disconnect") || low.includes("lost"))) {
+    return "Phone camera lost.";
+  }
+  if (low.includes("blocked") || low.includes("prohibited") || low.includes("flagged app")) {
+    return "Opened a blocked app.";
+  }
+  if (low.includes("looked away")) return "Looked away from the screen.";
+  if (low.includes("more than one") || low.includes("second face")) {
+    return "More than one face on camera.";
+  }
+  if (low.includes("no face")) return "No face on camera.";
+  if (t.length > 90) return `${t.slice(0, 87)}…`;
+  return t || "Event";
+}
+
+export function displayStudentName(name: string): string {
+  const n = (name || "").trim();
+  if (!n || n.toLowerCase() === "demo student" || n.toLowerCase() === "student") {
+    return "Student (name not typed)";
+  }
+  return n;
+}

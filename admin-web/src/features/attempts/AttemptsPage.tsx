@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   api,
+  displayStudentName,
   formatWhen,
   riskLabel,
   type AttemptSummary,
@@ -64,7 +65,7 @@ export function AttemptsPage() {
             <article key={a.session_id} className={`attempt-card ${a.flagged ? "is-flagged" : ""}`}>
               <div className="attempt-top">
                 <div>
-                  <h3>{a.student_name}</h3>
+                  <h3>{displayStudentName(a.student_name)}</h3>
                   <p className="status">{a.exam_title}</p>
                 </div>
                 <span className={`pill risk-${riskTier}`}>

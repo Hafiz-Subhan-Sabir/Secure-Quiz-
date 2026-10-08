@@ -2,8 +2,11 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   api,
+  displayStudentName,
   formatWhen,
   riskLabel,
+  shortEventText,
+  shortSummary,
   sourceLabel,
   type IntegrityReport,
 } from "@/shared/api/client";
@@ -104,7 +107,7 @@ export function ReportsPage() {
                   {needsReview ? "Please review" : "Looks fine"}
                 </h2>
                 <p className="status" style={{ marginTop: "0.35rem" }}>
-                  <strong>{report.student_name || "Student"}</strong> · {report.exam_title}
+                  <strong>{displayStudentName(report.student_name)}</strong> · {report.exam_title}
                 </p>
               </div>
               <span className={`pill risk-${pct >= 65 ? "high" : pct >= 40 ? "mid" : "ok"}`}>
@@ -126,11 +129,17 @@ export function ReportsPage() {
                 <span className="chip">
                   Score {report.quiz_score}/{report.quiz_max_score}
                 </span>
-              ) : null}
+              ) : (
+                <span className="chip chip-muted">Score pending</span>
+              )}
             </div>
             <p className="summary-plain" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
               <strong>Summary: </strong>
-              {report.summary_plain}
+              {shortSummary(report.summary_plain, {
+                pct,
+                photoCount: report.evidence.length,
+                flags: report.flags,
+              })}
             </p>
           </section>
 
@@ -147,7 +156,7 @@ export function ReportsPage() {
                       <figcaption>
                         <strong>{sourceLabel(active.source)}</strong>
                         <br />
-                        {active.plain_language}
+                        {shortEventText(active.plain_language)}
                         <br />
                         <span className="status">{formatWhen(active.captured_at)}</span>
                       </figcaption>
@@ -176,8 +185,9 @@ export function ReportsPage() {
               <h2>Timeline</h2>
               <div className="timeline">
                 {report.timeline.map((item) => {
-                  const plain = String(item.plain_language || item.gesture_label || item.type || "event");
-                  const short = plain.length > 64 ? plain.slice(0, 61) + "…" : plain;
+                  const short = shortEventText(
+                    String(item.plain_language || item.gesture_label || item.type || "event"),
+                  );
                   return (
                     <div className="timeline-item" key={String(item.event_id)}>
                       <span className="status">{formatWhen(String(item.ts))}</span>
