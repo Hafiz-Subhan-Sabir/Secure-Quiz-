@@ -194,6 +194,10 @@
       let paired = false;
       let frameTimer = null;
       let aliveTimer = null;
+      /** True while intentionally stopping/restarting camera (flip / Allow again). */
+      let cameraRestarting = false;
+      /** Ignore motion false-positives right after a camera switch. */
+      let motionGraceUntil = 0;
 
       function setBanner(text, cls) {
         const el = $("banner");
@@ -228,6 +232,7 @@
       }
 
       function notifyLost(reason) {
+        if (cameraRestarting) return;
         sendJson({ type: "camera_lost", reason });
         paired = false;
         setBanner("Camera off — tap below to allow again", "err");
@@ -246,32 +251,64 @@
           $("btnStart").onclick = () => location.reload();
           return;
         }
+        cameraRestarting = true;
+        motionGraceUntil = Date.now() + 4000;
+        lastMotionSample = null;
         try {
-          if (stream) stream.getTracks().forEach((t) => t.stop());
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              facingMode: { ideal: facing },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          });
+          if (stream) {
+            stream.getTracks().forEach((t) => {
+              try { t.onended = null; t.stop(); } catch { /* ignore */ }
+            });
+            stream = null;
+          }
+          let nextStream = null;
+          try {
+            nextStream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: {
+                facingMode: { exact: facing },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
+            });
+          } catch {
+            // Some phones reject exact facingMode — fall back to ideal.
+            nextStream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: {
+                facingMode: { ideal: facing },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
+            });
+          }
+          stream = nextStream;
           $("preview").srcObject = stream;
           stream.getVideoTracks().forEach((track) => {
-            track.onended = () => notifyLost("Phone camera permission ended");
+            track.onended = () => {
+              if (cameraRestarting) return;
+              notifyLost("Phone camera permission ended");
+            };
           });
           $("btnStart").textContent = paired ? "Camera locked" : "Camera on — pairing…";
           setBanner(paired ? "Camera locked for exam" : "Camera on — pairing with exam PC…", paired ? "ok" : "wait");
-          $("status").textContent = paired ? "Paired · keep this page open" : "Connecting…";
+          $("status").textContent = paired
+            ? (facing === "environment" ? "Paired · back camera (room) — keep this page open" : "Paired · front camera — keep this page open")
+            : "Connecting…";
           connectWs();
           startFrameLoop();
           startAliveLoop();
         } catch (err) {
+          cameraRestarting = false;
           notifyLost("Camera permission denied");
           setBanner("Camera blocked — tap Allow and try again", "err");
           $("status").textContent = String(err.message || err);
           $("btnStart").textContent = "Try again — allow camera";
+          return;
         }
+        cameraRestarting = false;
+        motionGraceUntil = Date.now() + 2500;
+        lastMotionSample = null;
       }
 
       function connectWs() {
@@ -317,7 +354,7 @@
       function startAliveLoop() {
         if (aliveTimer) return;
         aliveTimer = setInterval(() => {
-          if (!stream) return;
+          if (cameraRestarting || !stream) return;
           const live = stream.getVideoTracks().some((t) => t.readyState === "live");
           if (!live) {
             notifyLost("Phone camera track ended");
@@ -353,7 +390,11 @@
       let lastMotionAlertAt = 0;
 
       function sampleMotion() {
-        if (!paired || !stream) return;
+        if (!paired || !stream || cameraRestarting) return;
+        if (Date.now() < motionGraceUntil) {
+          lastMotionSample = null;
+          return;
+        }
         const video = $("preview");
         const canvas = $("snap");
         if (!video.videoWidth) return;
@@ -430,7 +471,12 @@
 
       $("btnStart").onclick = () => startCamera();
       $("btnFlip").onclick = async () => {
+        // Flip only switches lens — do not unpair or flag as camera lost.
         facing = facing === "environment" ? "user" : "environment";
+        setBanner("Switching camera…", "wait");
+        $("status").textContent = facing === "environment"
+          ? "Opening back camera…"
+          : "Opening front camera…";
         await startCamera();
       };
 
