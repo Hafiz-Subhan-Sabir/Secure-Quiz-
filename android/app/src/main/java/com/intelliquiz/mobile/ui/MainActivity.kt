@@ -176,14 +176,12 @@ class MainActivity : AppCompatActivity() {
             .put("type", "env_anomaly")
             .put("severity", 0.92)
             .put("gesture_label", "PHONE_APP_SWITCH")
-            .put(
-                "plain_language",
-                "Student left the IntelliQuiz phone camera app and opened another app. " +
-                    "Flagged as a cheating attempt — phone snapshot and PC screen saved for admin.",
-            )
+            .put("plain_language", "Student left the phone camera app.")
+            .put("cheating_attempt", true)
             .put("source", "android_native")
         try {
             bridge?.send(payload.toString())
+            setStatus("⚠ Left camera app — logged for admin. Return now.")
         } catch (_: Exception) {
             /* ignore */
         }
@@ -256,7 +254,8 @@ class MainActivity : AppCompatActivity() {
                     .put("source", "android_native")
                 bridge?.send(hello.toString())
                 runOnUiThread {
-                    envMonitor.start(this@MainActivity)
+                    // Do NOT start CameraX here — WebView owns the camera.
+                    // Running both caused blank screen / flip failures.
                     setStatus("Linked to exam PC — keep this screen open")
                     startEnvWatch()
                 }
@@ -274,13 +273,11 @@ class MainActivity : AppCompatActivity() {
                 }
             },
             onClose = { _, reason ->
-                envMonitor.stop()
                 runOnUiThread {
                     setStatus("Connection lost — reconnecting… ${reason.take(40)}")
                 }
             },
             onError = { ex ->
-                envMonitor.stop()
                 runOnUiThread {
                     setStatus("Cannot reach exam PC. Same Wi‑Fi? ${ex.message ?: ""}")
                 }

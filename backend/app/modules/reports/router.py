@@ -60,6 +60,8 @@ def _short_plain(text: str, typ: str) -> str:
         return "Phone moved or covered."
     if "left the" in low and "app" in low:
         return "Left the phone camera app."
+    if "lockdown" in low or "closed blocked" in low:
+        return "Exam lockdown started."
     if "blocked app" in low or "prohibited" in low or typ == "app_violation":
         return "Opened a blocked app."
     if "looked away" in low or typ == "gaze_away":
@@ -68,6 +70,8 @@ def _short_plain(text: str, typ: str) -> str:
         return "More than one face on camera."
     if "no face" in low or typ == "no_face":
         return "No face on camera."
+    if "phone" in low and "paired" in low:
+        return "Phone paired."
     if len(t) > 90:
         return t[:87] + "…"
     return t or PLAIN.get(typ, typ)

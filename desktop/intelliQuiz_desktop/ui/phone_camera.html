@@ -109,7 +109,6 @@
         height: 100%;
         object-fit: cover;
         display: block;
-        transform: scaleX(-1);
       }
       .lock-banner {
         position: absolute;
@@ -241,7 +240,117 @@
         $("status").textContent = "Quiz on the computer is paused until camera returns";
       }
 
-      async function startCamera() {
+      function stopStreamQuiet() {
+        if (!stream) return;
+        stream.getTracks().forEach((t) => {
+          try { t.onended = null; t.stop(); } catch { /* ignore */ }
+        });
+        stream = null;
+      }
+
+      async function resolveDeviceId(wantFacing) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const cams = devices.filter((d) => d.kind === "videoinput");
+          if (!cams.length) return null;
+          const wantFront = wantFacing === "user";
+          const match = cams.find((d) => {
+            const label = (d.label || "").toLowerCase();
+            if (wantFront) {
+              return label.includes("front") || label.includes("user") || label.includes("facing front");
+            }
+            return (
+              label.includes("back") ||
+              label.includes("rear") ||
+              label.includes("environment") ||
+              label.includes("facing back")
+            );
+          });
+          if (match) return match.deviceId;
+          // Fallback: many Androids list back first, front second.
+          if (cams.length >= 2) return wantFront ? cams[cams.length - 1].deviceId : cams[0].deviceId;
+          return cams[0].deviceId;
+        } catch {
+          return null;
+        }
+      }
+
+      async function openCameraStream(wantFacing) {
+        const deviceId = await resolveDeviceId(wantFacing);
+        const tries = [];
+        if (deviceId) {
+          tries.push({
+            audio: false,
+            video: {
+              deviceId: { exact: deviceId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          });
+        }
+        tries.push({
+          audio: false,
+          video: {
+            facingMode: { exact: wantFacing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        });
+        tries.push({
+          audio: false,
+          video: {
+            facingMode: { ideal: wantFacing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        });
+        tries.push({ audio: false, video: true });
+        let lastErr = null;
+        for (const constraints of tries) {
+          try {
+            return await navigator.mediaDevices.getUserMedia(constraints);
+          } catch (err) {
+            lastErr = err;
+          }
+        }
+        throw lastErr || new Error("Camera unavailable");
+      }
+
+      function bindStream(nextStream) {
+        stream = nextStream;
+        const video = $("preview");
+        video.srcObject = stream;
+        // Mirror only the front camera for a natural selfie view.
+        video.style.transform = facing === "user" ? "scaleX(-1)" : "none";
+        stream.getVideoTracks().forEach((track) => {
+          track.onended = () => {
+            if (cameraRestarting) return;
+            notifyLost("Phone camera permission ended");
+          };
+        });
+      }
+
+      function refreshPairedUi() {
+        const camLabel = facing === "environment" ? "back camera (room)" : "front camera";
+        $("btnStart").textContent = paired ? "Camera locked" : "Camera on — pairing…";
+        setBanner(
+          paired ? "Camera locked for exam" : "Camera on — pairing with exam PC…",
+          paired ? "ok" : "wait",
+        );
+        $("status").textContent = paired
+          ? `Paired · ${camLabel} — keep this page open`
+          : "Connecting…";
+        if (paired) $("doneNote").classList.add("show");
+      }
+
+      function ensurePairedSignal() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        sendJson({ type: "pair", session_id: sessionId, pairing_token: token });
+        sendJson({ type: "camera_alive" });
+      }
+
+      async function startCamera(options) {
+        const isFlip = !!(options && options.flip);
         // Phones block getUserMedia on plain http://LAN — must be https://
         if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           setBanner("Camera blocked by the phone (needs HTTPS)", "err");
@@ -249,66 +358,73 @@
             "Open the https:// link from the exam QR. If you see a certificate warning, tap Advanced → Proceed, then Allow camera.";
           $("btnStart").textContent = "Reload after accepting certificate";
           $("btnStart").onclick = () => location.reload();
-          return;
+          return false;
         }
         cameraRestarting = true;
-        motionGraceUntil = Date.now() + 4000;
+        motionGraceUntil = Date.now() + 4500;
         lastMotionSample = null;
+        const previousFacing = facing;
         try {
-          if (stream) {
-            stream.getTracks().forEach((t) => {
-              try { t.onended = null; t.stop(); } catch { /* ignore */ }
-            });
-            stream = null;
-          }
-          let nextStream = null;
-          try {
-            nextStream = await navigator.mediaDevices.getUserMedia({
-              audio: false,
-              video: {
-                facingMode: { exact: facing },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-              },
-            });
-          } catch {
-            // Some phones reject exact facingMode — fall back to ideal.
-            nextStream = await navigator.mediaDevices.getUserMedia({
-              audio: false,
-              video: {
-                facingMode: { ideal: facing },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-              },
-            });
-          }
-          stream = nextStream;
-          $("preview").srcObject = stream;
-          stream.getVideoTracks().forEach((track) => {
-            track.onended = () => {
-              if (cameraRestarting) return;
-              notifyLost("Phone camera permission ended");
-            };
-          });
-          $("btnStart").textContent = paired ? "Camera locked" : "Camera on — pairing…";
-          setBanner(paired ? "Camera locked for exam" : "Camera on — pairing with exam PC…", paired ? "ok" : "wait");
-          $("status").textContent = paired
-            ? (facing === "environment" ? "Paired · back camera (room) — keep this page open" : "Paired · front camera — keep this page open")
-            : "Connecting…";
+          stopStreamQuiet();
+          // Brief pause so Android releases the previous lens before flip.
+          if (isFlip) await new Promise((r) => setTimeout(r, 350));
+          const nextStream = await openCameraStream(facing);
+          bindStream(nextStream);
+          refreshPairedUi();
           connectWs();
+          ensurePairedSignal();
           startFrameLoop();
           startAliveLoop();
-        } catch (err) {
           cameraRestarting = false;
+          motionGraceUntil = Date.now() + 3000;
+          lastMotionSample = null;
+          return true;
+        } catch (err) {
+          // Flip failed — restore previous camera; do NOT unpair.
+          if (isFlip) {
+            facing = previousFacing;
+            try {
+              const fallback = await openCameraStream(facing);
+              bindStream(fallback);
+              refreshPairedUi();
+              ensurePairedSignal();
+              setBanner("Could not flip — kept previous camera (still paired)", "wait");
+              $("status").textContent = String(err.message || err);
+              cameraRestarting = false;
+              motionGraceUntil = Date.now() + 3000;
+              return false;
+            } catch {
+              /* fall through to soft error without unpairing if still paired */
+            }
+          }
+          cameraRestarting = false;
+          if (paired) {
+            setBanner("Camera restart failed — tap Allow camera again (still paired)", "err");
+            $("btnStart").textContent = "Allow camera again";
+            $("status").textContent = String(err.message || err);
+            return false;
+          }
           notifyLost("Camera permission denied");
           setBanner("Camera blocked — tap Allow and try again", "err");
           $("status").textContent = String(err.message || err);
           $("btnStart").textContent = "Try again — allow camera";
-          return;
+          return false;
         }
-        cameraRestarting = false;
-        motionGraceUntil = Date.now() + 2500;
-        lastMotionSample = null;
+      }
+
+      function capturePreviewDataUri() {
+        try {
+          const video = $("preview");
+          if (!video.videoWidth) return null;
+          const canvas = $("snap");
+          const ctx = canvas.getContext("2d");
+          canvas.width = Math.min(640, video.videoWidth);
+          canvas.height = Math.round(canvas.width * (video.videoHeight / video.videoWidth));
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL("image/jpeg", 0.55);
+        } catch {
+          return null;
+        }
       }
 
       function connectWs() {
@@ -454,30 +570,43 @@
 
       document.addEventListener("visibilitychange", () => {
         if (document.hidden && paired) {
+          const snap = capturePreviewDataUri();
           sendJson({
             type: "env_anomaly",
             severity: 0.92,
             gesture_label: "PHONE_APP_SWITCH",
             plain_language:
-              "Student left the phone camera page (opened another app or locked screen). Cheating attempt logged.",
+              "Student left the phone camera app (opened another app or locked screen).",
+            image_data_uri: snap || undefined,
+            cheating_attempt: true,
           });
           setBanner("Do not leave this page during the exam", "err");
+        } else if (!document.hidden && paired) {
+          ensurePairedSignal();
+          setBanner("Back on camera page — stay here until the exam ends", "ok");
         }
       });
 
       window.addEventListener("pagehide", () => {
+        if (cameraRestarting) return;
         sendJson({ type: "camera_lost", reason: "Phone page closed" });
       });
 
-      $("btnStart").onclick = () => startCamera();
+      $("btnStart").onclick = () => startCamera({ flip: false });
       $("btnFlip").onclick = async () => {
+        if (cameraRestarting) return;
         // Flip only switches lens — do not unpair or flag as camera lost.
-        facing = facing === "environment" ? "user" : "environment";
+        const next = facing === "environment" ? "user" : "environment";
+        facing = next;
         setBanner("Switching camera…", "wait");
-        $("status").textContent = facing === "environment"
-          ? "Opening back camera…"
-          : "Opening front camera…";
-        await startCamera();
+        $("status").textContent =
+          next === "environment" ? "Opening back camera…" : "Opening front camera…";
+        $("btnFlip").disabled = true;
+        try {
+          await startCamera({ flip: true });
+        } finally {
+          $("btnFlip").disabled = false;
+        }
       };
 
       // Motion check while paired

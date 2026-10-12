@@ -297,9 +297,54 @@ class SessionController:
         }
 
     def _may_capture_screenshots(self) -> bool:
-        """Screenshots only after the quiz has started (phone already paired)."""
+        """PC screen capture once an exam session is active (pairing or quiz)."""
         with self._lock:
-            return self.state.phase == "exam"
+            return self.state.phase in {"camera_setup", "exam"} and bool(self.state.session_id)
+
+    def _arm_app_lock(self, *, student_message: str | None = None) -> list[str]:
+        """Close blocked apps / other browsers and keep only the exam Edge/Chrome profile."""
+        allowed = {os.getpid()}
+        host = (
+            "127.0.0.1"
+            if self.settings.local_ui_host in ("0.0.0.0", "::")
+            else self.settings.local_ui_host
+        )
+        url = f"http://{host}:{self.settings.local_ui_port}/"
+        living = self.exam_shell.process is not None and self.exam_shell.process.poll() is None
+        if not living:
+            self.exam_shell.launch(url, kiosk=False)
+        if self.exam_shell.pid:
+            allowed.add(self.exam_shell.pid)
+        marker = str(self.exam_shell.profile_dir.resolve())
+        self.app_lock.set_protected_cmdline_markers({marker})
+        self.app_lock.set_allowed_pids(allowed)
+        self.focus_guard.set_allowed_pids(allowed)
+        killed_browsers = self.app_lock.force_clear_other_browsers()
+        self.app_lock.start()
+        self.focus_guard.start()
+        hits, killed = self.app_lock.enforce_once()
+        killed_all = list(killed) + list(killed_browsers)
+        if student_message:
+            with self._lock:
+                self.state.student_alert = student_message
+        self._append(
+            "app_violation" if hits else "heartbeat",
+            0.35 if hits else 0.05,
+            {
+                "source": "app_lock_arm",
+                "plain_language": (
+                    "Closed blocked apps before phone pairing."
+                    if killed_all
+                    else "Exam lockdown started — other apps blocked."
+                ),
+                "gesture_label": "APP_LOCK",
+                "app_hits": [{"name": h.name, "category": h.category} for h in hits],
+                "killed": killed_all,
+                "cheating_attempt": False,
+            },
+            sync_now=False,
+        )
+        return killed_all
 
     def _try_screen_capture(self) -> str | None:
         if not self._may_capture_screenshots():
@@ -366,15 +411,24 @@ class SessionController:
             self.state.error = ""
 
         self.monitor.start(session["id"])
-        try:
-            self.app_lock.enforce_once()
-        except Exception:
-            pass
         pairing = self.pairing.begin_session(
             session_id=session["id"],
             pairing_token=session["pairing_token"],
             exam_code=paper.get("title"),
         )
+        # Lock down immediately when entering phone pairing (not only at quiz start).
+        killed = []
+        try:
+            killed = self._arm_app_lock(
+                student_message=(
+                    "Other apps closed. Scan the phone QR and keep IntelliQuiz open on your phone."
+                )
+            )
+        except Exception:
+            try:
+                self.app_lock.enforce_once()
+            except Exception:
+                pass
         # Do not block the UI on network sync — flush in the background
         self._append("heartbeat", 0.0, {"source": "session_start"}, sync_now=False)
         return {
@@ -384,6 +438,7 @@ class SessionController:
             "pairing": pairing,
             "app_lock": self.app_lock.snapshot(),
             "require_android_camera": require_android,
+            "apps_closed": killed,
         }
 
     def advance_to_pairing(self) -> dict[str, Any]:
@@ -495,37 +550,21 @@ class SessionController:
         if require_pair and not paired:
             raise RuntimeError("Phone camera must be paired before starting the quiz")
 
-        allowed = {os.getpid()}
-        host = "127.0.0.1" if self.settings.local_ui_host in ("0.0.0.0", "::") else self.settings.local_ui_host
-        url = f"http://{host}:{self.settings.local_ui_port}/"
-        # Reuse the single exam window — never open a second quiz window.
-        living = self.exam_shell.process is not None and self.exam_shell.process.poll() is None
-        if not living:
-            self.exam_shell.launch(url, kiosk=False)
-        if self.exam_shell.pid:
-            allowed.add(self.exam_shell.pid)
-        marker = str(self.exam_shell.profile_dir.resolve())
-        self.app_lock.set_protected_cmdline_markers({marker})
-        self.app_lock.set_allowed_pids(allowed)
-        self.focus_guard.set_allowed_pids(allowed)
-
-        # Close other Chrome/Edge profiles immediately; keep exam profile only.
-        killed_browsers = self.app_lock.force_clear_other_browsers()
-
-        self.app_lock.start()
-        self.focus_guard.start()
-        hits, killed = self.app_lock.enforce_once()
-        killed = list(killed) + list(killed_browsers)
-        if any(h.category == "hard" for h in hits) and not killed:
-            pass
+        # Re-arm lockdown (pairing already started it; refresh allowed PIDs / browsers).
+        killed = self._arm_app_lock(
+            student_message=(
+                "Exam started. Keep this window open. Do not open Chrome, Edge, or helper apps."
+            )
+        )
         with self._lock:
             self.state.phase = "exam"
             self.state.android_paired = paired
             self.state.quiz_paused = False
             self.state.pause_reason = ""
-            self.state.student_alert = (
-                "Exam started. Keep this window open. Do not open Chrome, Edge, or helper apps."
-            )
+            if not self.state.student_alert:
+                self.state.student_alert = (
+                    "Exam started. Keep this window open. Do not open Chrome, Edge, or helper apps."
+                )
         self._start_heartbeat()
         self._append(
             "heartbeat",
@@ -534,7 +573,6 @@ class SessionController:
                 "source": "enter_exam",
                 "android_paired": self.state.android_paired,
                 "identity_source": self.state.identity_source,
-                "app_hits": [{"name": h.name, "category": h.category} for h in hits],
                 "killed": killed,
             },
         )

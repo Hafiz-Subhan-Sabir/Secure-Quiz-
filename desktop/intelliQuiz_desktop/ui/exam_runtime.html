@@ -1650,7 +1650,7 @@
         $("loginErr").classList.add("hidden");
         const primary = $("btnFooterPrimary");
         primary.disabled = true;
-        primary.textContent = "Opening camera check…";
+        primary.textContent = "Closing other apps…";
         try {
           const examId = $("examSelect").value;
           if (!examId) throw new Error("Select an exam first");
@@ -1667,6 +1667,16 @@
           startCamFeed();
           startPolling();
           await pollStatus();
+          const closed = (res.apps_closed || []).length;
+          if (closed) {
+            const alertEl = $("setupErr");
+            if (alertEl) {
+              alertEl.textContent =
+                "Other apps closed. Scan the phone QR next and keep the IntelliQuiz camera open.";
+              alertEl.classList.remove("hidden");
+              alertEl.style.color = "var(--ok, #1f7a4d)";
+            }
+          }
         } catch (e) {
           $("loginErr").textContent = String(e.message || e);
           $("loginErr").classList.remove("hidden");

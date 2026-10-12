@@ -279,21 +279,25 @@ export function shortSummary(
 export function shortEventText(text: string): string {
   const t = (text || "").trim();
   const low = t.toLowerCase();
-  if (low.includes("left the") && low.includes("app")) return "Left the phone camera app.";
+  if (low.includes("left the") && low.includes("app")) return "📱 Left the phone camera app.";
+  if (low.includes("lockdown") || low.includes("closed blocked") || low.includes("app_lock")) {
+    return "🔒 Exam lockdown started.";
+  }
   if (low.includes("phone") && (low.includes("moved") || low.includes("cover"))) {
-    return "Phone moved or covered.";
+    return "📱 Phone moved or covered.";
   }
   if (low.includes("phone") && (low.includes("disconnect") || low.includes("lost"))) {
-    return "Phone camera lost.";
+    return "📱 Phone camera lost.";
   }
+  if (low.includes("phone") && low.includes("paired")) return "📱 Phone paired.";
   if (low.includes("blocked") || low.includes("prohibited") || low.includes("flagged app")) {
-    return "Opened a blocked app.";
+    return "🚫 Opened a blocked app.";
   }
-  if (low.includes("looked away")) return "Looked away from the screen.";
+  if (low.includes("looked away")) return "👀 Looked away from the screen.";
   if (low.includes("more than one") || low.includes("second face")) {
-    return "More than one face on camera.";
+    return "👥 More than one face on camera.";
   }
-  if (low.includes("no face")) return "No face on camera.";
+  if (low.includes("no face")) return "👤 No face on camera.";
   if (t.length > 90) return `${t.slice(0, 87)}…`;
   return t || "Event";
 }
