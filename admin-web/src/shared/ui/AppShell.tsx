@@ -4,23 +4,23 @@ import { useAuth } from "@/features/auth/AuthContext";
 const TITLES: Record<string, { title: string; hint: string }> = {
   "/overview": {
     title: "Home",
-    hint: "Quick status and shortcuts.",
+    hint: "Server status and shortcuts",
   },
   "/exams": {
     title: "Exams",
-    hint: "Create questions and publish.",
+    hint: "Create and publish quizzes",
   },
   "/attempts": {
     title: "Students",
-    hint: "Open a student → check photos → decide.",
+    hint: "Pick a student to review",
   },
   "/proctoring": {
     title: "Rules",
-    hint: "When photos are saved.",
+    hint: "When to save photos",
   },
   "/reports": {
     title: "Photos",
-    hint: "Risk score + photo proof.",
+    hint: "Score · photos · decide",
   },
 };
 

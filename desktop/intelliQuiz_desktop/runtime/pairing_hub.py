@@ -273,27 +273,29 @@ class PairingHub:
                     phone_ts = self._last_phone_frame_ts
                     desktop_ts = datetime.now(UTC).isoformat()
                     self._last_desktop_frame_ts = desktop_ts
-                # Persist phone JPEGs as admin evidence on a cooldown (not every frame)
+                # Save at most one quiet "paired" still — not every N seconds.
+                # Real cheating photos come from env_anomaly (move / leave app).
                 now = time.time()
-                if self.on_android_event and (now - self._last_phone_evidence_at) >= 12.0:
+                if (
+                    self.on_android_event
+                    and frame_n == 1
+                    and (now - self._last_phone_evidence_at) >= 1.0
+                ):
                     self._last_phone_evidence_at = now
                     b64 = base64.b64encode(raw).decode("ascii")
                     self.on_android_event(
-                        "android_env_anomaly",
-                        0.45 if frame_n <= 2 else 0.6,
+                        "android_snapshot",
+                        0.15,
                         {
                             "source": "android_camera",
-                            "plain_language": (
-                                "Phone camera paired — room view photo saved for admin."
-                                if frame_n <= 2
-                                else "Phone room camera captured a frame during the exam."
-                            ),
-                            "gesture_label": "PHONE" if frame_n <= 2 else "ENV",
+                            "plain_language": "Phone paired — first room photo.",
+                            "gesture_label": "PHONE",
                             "image_data_uri": f"data:image/jpeg;base64,{b64}",
-                            "capture_reason": "android_frame",
+                            "capture_reason": "android_pair_snapshot",
                             "android_frame_index": frame_n,
                             "phone_frame_ts": phone_ts,
                             "desktop_receive_ts": desktop_ts,
+                            "cheating_attempt": False,
                         },
                     )
                 return

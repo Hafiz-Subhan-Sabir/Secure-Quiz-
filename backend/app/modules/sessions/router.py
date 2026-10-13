@@ -3,7 +3,7 @@ import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_db, require_roles
@@ -69,6 +69,34 @@ def create_session(
     return session
 
 
+@router.delete("/attempts", response_model=OkResponse)
+def clear_all_attempts(
+    db: Session = Depends(get_db),
+    _claims: dict = Depends(require_roles("admin")),
+) -> OkResponse:
+    """Delete all student attempts, integrity events, and photo reports (fresh start)."""
+    db.execute(delete(IntegrityEvent))
+    db.execute(delete(ExamSession))
+    db.commit()
+    return OkResponse(ok=True)
+
+
+@router.delete("/attempts/{session_id}", response_model=OkResponse)
+def clear_one_attempt(
+    session_id: str,
+    db: Session = Depends(get_db),
+    _claims: dict = Depends(require_roles("admin")),
+) -> OkResponse:
+    """Delete one attempt and its photo report."""
+    session = db.get(ExamSession, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    db.execute(delete(IntegrityEvent).where(IntegrityEvent.session_id == session_id))
+    db.delete(session)
+    db.commit()
+    return OkResponse(ok=True)
+
+
 @router.get("/attempts", response_model=list[AttemptSummary])
 def list_attempts(
     db: Session = Depends(get_db),
@@ -119,7 +147,7 @@ def list_attempts(
                 android_paired=session.android_paired,
                 event_count=event_count,
                 evidence_count=evidence_count,
-                flagged=session.last_risk_score >= 0.65 or evidence_count > 0,
+                flagged=session.last_risk_score >= 0.55 or event_count > 8,
                 quiz_score=int(getattr(session, "quiz_score", 0) or 0),
                 quiz_max_score=int(getattr(session, "quiz_max_score", 0) or 0),
                 quiz_percent=float(getattr(session, "quiz_percent", 0.0) or 0.0),

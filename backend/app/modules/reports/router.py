@@ -22,9 +22,13 @@ PLAIN = {
     "no_face": "No face on camera.",
     "app_violation": "Opened a blocked app.",
     "android_env_anomaly": "Phone camera saw something odd.",
+    "android_snapshot": "Phone paired photo.",
     "heartbeat": "Normal check-in.",
     "submit": "Exam submitted.",
 }
+
+# Event types / reasons that should not inflate cheating risk.
+_SOFT_TYPES = frozenset({"heartbeat", "submit", "android_snapshot"})
 
 SourceName = Literal["primary_webcam", "android_camera", "screen"]
 
@@ -143,12 +147,26 @@ def get_session_report(
         ).all()
     )
 
-    severities = [e.severity for e in events if e.type not in ("heartbeat", "submit")]
+    def _is_risk_event(e: IntegrityEvent) -> bool:
+        if e.type in _SOFT_TYPES:
+            return False
+        try:
+            p = json.loads(e.payload_json or "{}")
+        except Exception:
+            p = {}
+        reason = str(p.get("capture_reason") or "")
+        if reason in {"android_frame", "android_pair_snapshot", "app_lock_arm"}:
+            return False
+        if p.get("cheating_attempt") is False and e.severity < 0.65:
+            return False
+        return e.severity >= 0.4
+
+    severities = [e.severity for e in events if _is_risk_event(e)]
     flags = sorted(
         {
             e.type
             for e in events
-            if e.severity >= 0.65 and e.type not in ("heartbeat", "submit")
+            if _is_risk_event(e) and e.severity >= 0.65 and e.type not in _SOFT_TYPES
         }
     )
 
@@ -182,8 +200,9 @@ def get_session_report(
         # Real evidence photos only (skip heartbeat noise)
         if e.type == "heartbeat":
             continue
+        # Soft pair snapshots: keep one photo, low weight (already excluded from risk).
         image = payload.get("image_data_uri")
-        if image:
+        if image and (e.type != "android_snapshot" or e.severity >= 0.1):
             evidence.append(
                 EvidenceFrame(
                     event_id=e.event_id,
@@ -196,22 +215,26 @@ def get_session_report(
                 )
             )
         screen = payload.get("screen_image_data_uri")
-        if screen:
+        if screen and e.type != "android_snapshot":
             evidence.append(
                 EvidenceFrame(
                     event_id=f"{e.event_id}-screen",
                     captured_at=e.ts.isoformat(),
                     source=cast(SourceName, "screen"),
                     gesture_label=str(payload.get("gesture_label", e.type)),
-                    plain_language="Screen photo · " + plain,
+                    plain_language="Screen · " + plain,
                     severity=e.severity,
                     image_data_uri=str(screen),
                 )
             )
 
-    # Meaningful event count excludes routine heartbeats
-    meaningful = [e for e in events if e.type != "heartbeat"]
-    prob = _compute_cheating_probability(severities, session.last_risk_score)
+    # Meaningful event count excludes routine heartbeats / soft snapshots
+    meaningful = [e for e in events if e.type not in _SOFT_TYPES]
+    risk_score = float(session.last_risk_score or 0.0)
+    # Soft pair photos should not drag risk up via last_risk alone when no hard events.
+    if not severities and risk_score < 0.55:
+        risk_score = min(risk_score, 0.2)
+    prob = _compute_cheating_probability(severities, risk_score)
     return IntegrityReport(
         session_id=session_id,
         student_name=_resolve_student_name(session, student, events),

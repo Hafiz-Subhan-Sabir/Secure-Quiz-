@@ -15,6 +15,7 @@ ALLOWED_SYNC_TYPES = frozenset(
         "no_face",
         "app_violation",
         "android_env_anomaly",
+        "android_snapshot",
         "heartbeat",
         "submit",
     }

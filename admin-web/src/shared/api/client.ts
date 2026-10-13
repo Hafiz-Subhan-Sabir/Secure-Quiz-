@@ -222,6 +222,13 @@ export const api = {
     }),
   listAttempts: (signal?: AbortSignal) =>
     request<AttemptSummary[]>("/sessions/attempts", { signal }),
+  clearAllAttempts: (signal?: AbortSignal) =>
+    request<{ ok: boolean }>("/sessions/attempts", { method: "DELETE", signal }),
+  clearAttempt: (sessionId: string, signal?: AbortSignal) =>
+    request<{ ok: boolean }>(`/sessions/attempts/${sessionId}`, {
+      method: "DELETE",
+      signal,
+    }),
   getReport: (sessionId: string, signal?: AbortSignal) =>
     request<IntegrityReport>(`/reports/sessions/${sessionId}`, { signal }),
 };
@@ -249,6 +256,18 @@ export function formatWhen(iso: string): string {
   }
 }
 
+/** Clock time only — for compact alert lists. */
+export function formatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 /** Short, simple admin summary even if the API still returns old long text. */
 export function shortSummary(
   _text: string,
@@ -259,47 +278,72 @@ export function shortSummary(
   for (const f of opts.flags) {
     const fl = f.toLowerCase();
     if (fl.includes("phone") || fl.includes("android") || fl.includes("no_face")) {
-      flagBits.push("phone / camera");
+      flagBits.push("phone");
     } else if (fl.includes("app")) {
       flagBits.push("blocked app");
     } else if (fl.includes("face") || fl.includes("gaze") || fl.includes("gesture")) {
       flagBits.push("face");
     }
   }
-  const warnings = [...new Set(flagBits)].join(", ") || "none";
+  const warnings = [...new Set(flagBits)].join(", ");
   if (opts.pct < 35 && opts.flags.length === 0 && photos === 0) {
-    return "Looks fine. No strong cheating signs. You can accept the score.";
+    return "No strong cheating signs. You can accept the score.";
   }
   if (opts.pct < 65) {
-    return `Please check. Saved ${photos} photo(s). Warnings: ${warnings}. Open photos, then decide.`;
+    return `Check the ${photos} photo(s)${warnings ? ` — ${warnings}` : ""}. Then decide.`;
   }
-  return `High concern (${Math.round(opts.pct)}% risk). Saved ${photos} photo(s). Warnings: ${warnings}. Review photos before accepting.`;
+  return `High risk. Review the ${photos} photo(s)${warnings ? ` (${warnings})` : ""} before accepting.`;
 }
 
+const APP_NICE: Record<string, string> = {
+  msedge: "Edge",
+  chrome: "Chrome",
+  firefox: "Firefox",
+  brave: "Brave",
+  notepad: "Notepad",
+  discord: "Discord",
+  code: "VS Code",
+  cursor: "Cursor",
+};
+
 export function shortEventText(text: string): string {
-  const t = (text || "").trim();
+  const t = (text || "").trim().replace(/\s+/g, " ");
   const low = t.toLowerCase();
-  if (low.includes("left the") && low.includes("app")) return "📱 Left the phone camera app.";
+
+  const blocked = t.match(/blocked app[^:]*:\s*([a-z0-9._-]+)/i);
+  if (blocked) {
+    const raw = blocked[1].replace(/\.exe$/i, "").toLowerCase();
+    return `Blocked app (${APP_NICE[raw] || raw})`;
+  }
+  if (low.includes("left the") && (low.includes("app") || low.includes("page"))) {
+    return "Left phone camera app";
+  }
   if (low.includes("lockdown") || low.includes("closed blocked") || low.includes("app_lock")) {
-    return "🔒 Exam lockdown started.";
+    return "Apps locked for exam";
   }
   if (low.includes("phone") && (low.includes("moved") || low.includes("cover"))) {
-    return "📱 Phone moved or covered.";
+    return "Phone moved or covered";
   }
   if (low.includes("phone") && (low.includes("disconnect") || low.includes("lost"))) {
-    return "📱 Phone camera lost.";
+    return "Phone camera lost";
   }
-  if (low.includes("phone") && low.includes("paired")) return "📱 Phone paired.";
+  if (low.includes("phone") && low.includes("paired")) return "Phone paired";
+  if (low.includes("screen") && (low.includes("snapshot") || low.includes("capture"))) {
+    return "Screen snapshot";
+  }
   if (low.includes("blocked") || low.includes("prohibited") || low.includes("flagged app")) {
-    return "🚫 Opened a blocked app.";
+    return "Blocked app";
   }
-  if (low.includes("looked away")) return "👀 Looked away from the screen.";
-  if (low.includes("more than one") || low.includes("second face")) {
-    return "👥 More than one face on camera.";
+  if (low.includes("looked away")) return "Looked away";
+  if (low.includes("more than one") || low.includes("second face")) return "Extra face on camera";
+  if (low.includes("no face")) return "No face on camera";
+  if (low.includes("photo saved for admin")) {
+    const cleaned = t.replace(/\.?\s*Photo saved for admin\.?/gi, "").trim();
+    if (cleaned) return shortEventText(cleaned);
+    return "Photo saved";
   }
-  if (low.includes("no face")) return "👤 No face on camera.";
-  if (t.length > 90) return `${t.slice(0, 87)}…`;
-  return t || "Event";
+  if (t.length > 56) return `${t.slice(0, 53)}…`;
+  return t || "Alert";
 }
 
 export function displayStudentName(name: string): string {

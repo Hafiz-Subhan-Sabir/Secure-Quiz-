@@ -327,9 +327,10 @@ class SessionController:
         if student_message:
             with self._lock:
                 self.state.student_alert = student_message
+        # Log as heartbeat only — closing apps at pairing must not look like cheating.
         self._append(
-            "app_violation" if hits else "heartbeat",
-            0.35 if hits else 0.05,
+            "heartbeat",
+            0.05,
             {
                 "source": "app_lock_arm",
                 "plain_language": (
@@ -890,6 +891,12 @@ class SessionController:
             enriched.get("plain_language")
             or "Suspicious activity detected."
         )
+        # Quiet pair snapshot — store photo only, no pause / cheating flag.
+        if typ == "android_snapshot" or enriched.get("capture_reason") == "android_pair_snapshot":
+            enriched.setdefault("cheating_attempt", False)
+            self._append(typ, severity, enriched)
+            return
+
         # Phone left the exam camera app — attach PC screen snapshot for admin review.
         if label in {"PHONE_APP_SWITCH", "PHONE_HELPER", "APP_SWITCH", "PHONE_MOTION"} or typ == "android_env_anomaly":
             if not enriched.get("screen_image_data_uri"):
@@ -1060,17 +1067,23 @@ class SessionController:
             self.state.pause_reason = ""
 
     def _on_app_violation(self, hits: list[ProcessHit], killed: list[str]) -> None:
-        # No cheating evidence / screenshots until the quiz has started.
-        if not self._may_capture_screenshots() or not hits:
+        if not hits:
+            return
+        # During phone pairing we still close apps, but do not file cheating reports
+        # (Edge/Chrome exam window + QR screen were falsely flagged before).
+        with self._lock:
+            phase = self.state.phase
+        if phase != "exam":
             return
         hard = [h for h in hits if h.category == "hard"]
         browsers = [h for h in hits if h.category == "browser"]
-        severity = 0.9 if hard else (0.8 if browsers else 0.55)
+        # Browsers alone are weaker signal once exam Edge/Chrome is protected.
+        severity = 0.9 if hard else (0.75 if browsers else 0.55)
         names = sorted({h.name for h in hits})
         with self._lock:
             self.state.quiz_paused = True
             self.state.pause_reason = (
-                "Prohibited app detected. Close Chrome/Edge/helpers and return here."
+                "Prohibited app detected. Close helper apps and return here."
             )
             self.state.student_alert = (
                 "Prohibited app: " + ", ".join(names) + ". Photo saved for admin."
@@ -1079,7 +1092,7 @@ class SessionController:
             "hits": [{"name": h.name, "pid": h.pid, "category": h.category} for h in hits],
             "killed": killed,
             "plain_language": (
-                "Blocked app during exam: " + ", ".join(names) + ". Photo saved for admin."
+                "Blocked app during exam: " + ", ".join(names) + "."
             ),
             "source": "desktop_app_lock",
             "gesture_label": "APP_VIOLATION",

@@ -12,21 +12,54 @@ export function AttemptsPage() {
   const [attempts, setAttempts] = useState<AttemptSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "flagged">("flagged");
+  const [clearing, setClearing] = useState(false);
+
+  async function refresh(signal?: AbortSignal) {
+    const list = await api.listAttempts(signal);
+    setAttempts(list);
+    if (!list.some((a) => a.flagged)) setFilter("all");
+  }
 
   useEffect(() => {
     const ac = new AbortController();
-    void api
-      .listAttempts(ac.signal)
-      .then((list) => {
-        setAttempts(list);
-        if (!list.some((a) => a.flagged)) setFilter("all");
-      })
-      .catch((err: unknown) => {
-        if ((err as Error).name === "AbortError") return;
-        setError(err instanceof Error ? err.message : "Could not load students.");
-      });
+    void refresh(ac.signal).catch((err: unknown) => {
+      if ((err as Error).name === "AbortError") return;
+      setError(err instanceof Error ? err.message : "Could not load students.");
+    });
     return () => ac.abort();
   }, []);
+
+  async function clearAllReports() {
+    if (
+      !window.confirm(
+        "Delete ALL student attempts and photo reports? Exams and logins stay. This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+    setClearing(true);
+    setError(null);
+    try {
+      await api.clearAllAttempts();
+      setAttempts([]);
+      setFilter("all");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not clear reports.");
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  async function clearOne(sessionId: string, name: string) {
+    if (!window.confirm(`Delete report for ${name}?`)) return;
+    setError(null);
+    try {
+      await api.clearAttempt(sessionId);
+      setAttempts((prev) => prev.filter((a) => a.session_id !== sessionId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete this report.");
+    }
+  }
 
   const flaggedCount = useMemo(() => attempts.filter((a) => a.flagged).length, [attempts]);
   const visible = useMemo(
@@ -53,6 +86,14 @@ export function AttemptsPage() {
             Review ({flaggedCount})
           </button>
         </div>
+        <button
+          type="button"
+          className="ghost-btn compact"
+          onClick={() => void clearAllReports()}
+          disabled={clearing || !attempts.length}
+        >
+          {clearing ? "Clearing…" : "Clear all reports"}
+        </button>
       </div>
 
       {error ? <p className="error-text">{error}</p> : null}
@@ -98,9 +139,18 @@ export function AttemptsPage() {
                 {formatWhen(a.started_at)}
               </p>
 
-              <Link className="primary-btn block" to={`/reports?session=${a.session_id}`}>
-                Open photos
-              </Link>
+              <div className="attempt-actions">
+                <Link className="primary-btn block" to={`/reports?session=${a.session_id}`}>
+                  Open photos
+                </Link>
+                <button
+                  type="button"
+                  className="ghost-btn compact"
+                  onClick={() => void clearOne(a.session_id, displayStudentName(a.student_name))}
+                >
+                  Delete
+                </button>
+              </div>
             </article>
           );
         })}
