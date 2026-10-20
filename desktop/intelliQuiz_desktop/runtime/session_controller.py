@@ -449,10 +449,17 @@ class SessionController:
         return {"ok": True, "phase": "camera_setup", "pairing": self.pairing.status()}
 
     def confirm_camera(self, *, prefer_phone: bool = False) -> dict[str, Any]:
-        """Hard gate: identity camera OK, and phone must stay paired as secondary camera."""
+        """Hard gate: identity camera OK, and phone must stay paired as secondary camera.
+
+        Rules:
+        - PC has a working webcam → PC webcam identity is compulsory (phone alone is not enough).
+        - PC has no webcam → phone camera identity is allowed.
+        - Phone secondary pairing may still be required in both cases.
+        """
         mon = self.monitor.status()
         pair = self.pairing.status()
         paired = bool(pair.get("paired") or self.state.android_paired)
+        webcam_ok = bool(mon.get("camera_ok"))
 
         # Phone is mandatory even when the PC webcam is used for face identity.
         if self.settings.require_android_camera_always and not paired:
@@ -461,7 +468,12 @@ class SessionController:
                 "and keep the IntelliQuiz camera app open during the exam."
             )
 
-        if prefer_phone or (not mon.get("camera_ok") and paired):
+        # Phone-only identity is allowed only when this PC has no working webcam.
+        if prefer_phone or (not webcam_ok and paired):
+            if webcam_ok:
+                raise RuntimeError(
+                    "This PC has a webcam. Center one face on the PC camera, then pair your phone."
+                )
             if not paired:
                 raise RuntimeError(
                     "Phone camera is not paired yet. Scan the QR with your phone and wait for the green lock."
@@ -485,7 +497,7 @@ class SessionController:
                 "monitor": mon,
             }
 
-        if not mon.get("camera_ok"):
+        if not webcam_ok:
             raise RuntimeError(
                 "No webcam detected on this PC. Switch to “Use phone camera” and scan the QR code."
             )
@@ -531,22 +543,27 @@ class SessionController:
         status = self.pairing.status()
         paired = bool(status.get("paired") or self.state.android_paired)
 
-        # Auto-confirm if phone paired but confirm_camera was not called yet
+        # Auto-confirm if setup was skipped: webcam wins when present; phone only if no webcam.
         if not self.state.face_verified:
-            if paired:
+            mon = self.monitor.status()
+            webcam_ok = bool(mon.get("camera_ok"))
+            face_ok = webcam_ok and int(mon.get("face_count") or 0) == 1
+            if webcam_ok:
+                if not face_ok:
+                    raise RuntimeError(
+                        "This PC has a webcam. Complete the PC face check before starting the quiz."
+                    )
+                with self._lock:
+                    self.state.face_verified = True
+                    self.state.identity_source = "webcam"
+            elif paired:
                 with self._lock:
                     self.state.face_verified = True
                     self.state.identity_source = self.state.identity_source or "phone"
             else:
-                mon = self.monitor.status()
-                if mon.get("camera_ok") and int(mon.get("face_count") or 0) == 1:
-                    with self._lock:
-                        self.state.face_verified = True
-                        self.state.identity_source = "webcam"
-                else:
-                    raise RuntimeError(
-                        "Complete camera setup first: pass the webcam face check, or pair your phone camera."
-                    )
+                raise RuntimeError(
+                    "Complete camera setup first: pass the webcam face check, or pair your phone camera."
+                )
 
         if require_pair and not paired:
             raise RuntimeError("Phone camera must be paired before starting the quiz")

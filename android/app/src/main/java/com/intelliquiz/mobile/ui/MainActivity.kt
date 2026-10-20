@@ -122,6 +122,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Fires before onPause when user opens Recents/Home — capture while camera is still live.
+        if (examCameraActive && envMonitor.paired) {
+            reportPhoneAppSwitch()
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         if (examCameraActive && envMonitor.paired) {
@@ -172,6 +180,30 @@ class MainActivity : AppCompatActivity() {
         val now = System.currentTimeMillis()
         if (now - lastAppSwitchReportAt < 8_000L) return
         lastAppSwitchReportAt = now
+        val wv = webView
+        if (wv != null) {
+            // Capture a still from the live WebView camera page before leaving.
+            wv.evaluateJavascript(
+                "(function(){try{return (window.__iqCaptureAppSwitch&&window.__iqCaptureAppSwitch())||'';}catch(e){return '';}})();",
+            ) { raw ->
+                val imageUri = parseJsStringResult(raw)
+                sendAppSwitchPayload(imageUri)
+            }
+        } else {
+            sendAppSwitchPayload(null)
+        }
+    }
+
+    private fun parseJsStringResult(raw: String?): String? {
+        if (raw.isNullOrBlank() || raw == "null" || raw == "\"\"") return null
+        return try {
+            JSONObject("{\"v\":$raw}").optString("v", "").takeIf { it.startsWith("data:") }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun sendAppSwitchPayload(imageDataUri: String?) {
         val payload = JSONObject()
             .put("type", "env_anomaly")
             .put("severity", 0.92)
@@ -179,9 +211,14 @@ class MainActivity : AppCompatActivity() {
             .put("plain_language", "Student left the phone camera app.")
             .put("cheating_attempt", true)
             .put("source", "android_native")
+        if (!imageDataUri.isNullOrBlank()) {
+            payload.put("image_data_uri", imageDataUri)
+        }
         try {
             bridge?.send(payload.toString())
-            setStatus("⚠ Left camera app — logged for admin. Return now.")
+            runOnUiThread {
+                setStatus("⚠ Left camera app — photo logged. Return now.")
+            }
         } catch (_: Exception) {
             /* ignore */
         }

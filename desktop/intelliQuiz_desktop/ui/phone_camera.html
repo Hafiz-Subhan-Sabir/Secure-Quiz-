@@ -568,18 +568,33 @@
         lastMotionSample = gray;
       }
 
+      function reportAppSwitch(plain) {
+        if (!paired) return;
+        const snap = capturePreviewDataUri();
+        sendJson({
+          type: "env_anomaly",
+          severity: 0.92,
+          gesture_label: "PHONE_APP_SWITCH",
+          plain_language:
+            plain ||
+            "Student left the phone camera app (opened another app or locked screen).",
+          image_data_uri: snap || undefined,
+          cheating_attempt: true,
+        });
+      }
+
+      // Called from Android native onPause so a photo is saved when leaving the app.
+      window.__iqCaptureAppSwitch = function () {
+        try {
+          return capturePreviewDataUri() || "";
+        } catch {
+          return "";
+        }
+      };
+
       document.addEventListener("visibilitychange", () => {
         if (document.hidden && paired) {
-          const snap = capturePreviewDataUri();
-          sendJson({
-            type: "env_anomaly",
-            severity: 0.92,
-            gesture_label: "PHONE_APP_SWITCH",
-            plain_language:
-              "Student left the phone camera app (opened another app or locked screen).",
-            image_data_uri: snap || undefined,
-            cheating_attempt: true,
-          });
+          reportAppSwitch();
           setBanner("Do not leave this page during the exam", "err");
         } else if (!document.hidden && paired) {
           ensurePairedSignal();
@@ -589,7 +604,14 @@
 
       window.addEventListener("pagehide", () => {
         if (cameraRestarting) return;
+        if (paired) {
+          reportAppSwitch("Student closed or left the phone camera page.");
+        }
         sendJson({ type: "camera_lost", reason: "Phone page closed" });
+      });
+
+      document.addEventListener("freeze", () => {
+        if (paired) reportAppSwitch("Phone camera page was frozen / backgrounded.");
       });
 
       $("btnStart").onclick = () => startCamera({ flip: false });

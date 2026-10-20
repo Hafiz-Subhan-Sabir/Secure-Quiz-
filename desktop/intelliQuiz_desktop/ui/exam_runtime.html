@@ -636,7 +636,7 @@
                 <button type="button" class="ghost" id="btnCopyUrl" style="margin-bottom:0.5rem">Copy phone link</button>
                 <p class="note" id="qrEndpoint">Same router / Wi‑Fi. Guest networks often fail.</p>
                 <button type="button" class="linkish" id="btnSwitchWebcam">← Back to PC webcam</button>
-                <p class="note" style="margin-top:0.75rem"><strong>Phone pairing is required</strong> for every exam (with or without PC webcam).</p>
+                <p class="note" style="margin-top:0.75rem"><strong>Phone pairing is required</strong> for every exam. If this PC has a webcam, you must also pass the PC face check — phone alone is not enough.</p>
               </div>
               <p class="err hidden" id="setupErr"></p>
             </div>
@@ -1011,14 +1011,18 @@
       }
 
       function gateReady(st) {
-        if (!st) return { ready: false, preferPhone: setupMode === "phone" };
+        if (!st) return { ready: false, preferPhone: false };
         const mon = st.monitor || {};
         const pair = st.pairing || {};
         const paired = !!(st.android_paired || pair.paired);
-        // Phone is always required, even when PC webcam is used for face identity.
-        if (setupMode === "phone") return { ready: paired, preferPhone: true };
-        const camOk = !!mon.camera_ok && mon.face_count === 1;
-        return { ready: camOk && paired, preferPhone: false, phoneMissing: camOk && !paired };
+        const hasWebcam = !!mon.camera_ok;
+        const faceOk = hasWebcam && mon.face_count === 1;
+        // PC webcam present → must use it (phone alone is not enough). Phone still required as secondary.
+        // No PC webcam → phone camera only is enough.
+        if (hasWebcam) {
+          return { ready: faceOk && paired, preferPhone: false, phoneMissing: faceOk && !paired };
+        }
+        return { ready: paired, preferPhone: true };
       }
 
       function syncFooter() {
@@ -1090,10 +1094,27 @@
           } else {
             if (g.ready) {
               hint.classList.add("ok-text");
-              hint.innerHTML = "<strong>Ready!</strong> Phone paired — continue to the quiz.";
+              hint.innerHTML = g.preferPhone
+                ? "<strong>Ready!</strong> Phone paired — continue to the quiz."
+                : "<strong>Ready!</strong> PC camera + phone paired — continue to the quiz.";
               primary.textContent = "Start quiz →";
               primary.disabled = false;
               primary.classList.add("ready");
+            } else if (!g.preferPhone) {
+              const mon = (lastStatus && lastStatus.monitor) || {};
+              const pair = (lastStatus && lastStatus.pairing) || {};
+              const phonePaired = !!(lastStatus && (lastStatus.android_paired || pair.paired));
+              if (g.phoneMissing || !phonePaired) {
+                hint.innerHTML = "<strong>Phone required.</strong> Scan the QR and keep IntelliQuiz open.";
+                primary.textContent = "Waiting for phone…";
+              } else if (mon.camera_ok) {
+                hint.innerHTML = "<strong>PC webcam required.</strong> Go back, center one face, then start.";
+                primary.textContent = "Waiting for PC face…";
+              } else {
+                hint.innerHTML = "<strong>Next:</strong> Open your phone camera app → scan the QR → wait for “paired”.";
+                primary.textContent = "Waiting for phone…";
+              }
+              primary.disabled = true;
             } else {
               hint.innerHTML = "<strong>Next:</strong> Open your phone camera app → scan the QR → wait for “paired”.";
               primary.textContent = "Waiting for phone…";
@@ -1231,7 +1252,24 @@
         clCam.className = "";
         clQuiz.className = "wait";
         if (setupMode === "phone") {
-          if (paired) {
+          if (mon.camera_ok) {
+            // Phone panel is for secondary pairing; PC webcam is still required.
+            if (camOk && paired) {
+              clCam.className = "done";
+              $("clCamText").textContent = "PC camera + phone ready";
+              clCam.querySelector(".mark").textContent = "✓";
+              clQuiz.className = "current";
+              clQuiz.querySelector(".mark").textContent = "→";
+            } else if (!paired) {
+              clCam.className = "current";
+              $("clCamText").textContent = "Scan QR — phone required with PC cam";
+              clCam.querySelector(".mark").textContent = "2";
+            } else {
+              clCam.className = "current";
+              $("clCamText").textContent = "Back to PC cam — show one face";
+              clCam.querySelector(".mark").textContent = "2";
+            }
+          } else if (paired) {
             clCam.className = "done";
             $("clCamText").textContent = "Phone camera paired";
             clCam.querySelector(".mark").textContent = "✓";
@@ -1366,20 +1404,25 @@
         showPauseOverlay(st);
         syncFooter();
 
-        // Always require phone: no webcam → phone mode; webcam OK but unpaired → show QR
+        // No webcam → phone mode (after webcam open timeout). Webcam OK but unpaired → show QR.
+        // Wait long enough for Windows webcam open (~4s) before treating camera as missing.
         if (phase === "setup") {
           const pairedNow = !!(st.android_paired || pair.paired);
           if (setupMode === "webcam" && !mon.camera_ok) {
             camFailStreak += 1;
-            if (!autoPhoneSwitched && camFailStreak >= 2) {
+            if (!autoPhoneSwitched && camFailStreak >= 6) {
               autoPhoneSwitched = true;
               setSetupMode("phone");
               $("setupErr").classList.add("hidden");
             }
           } else if (mon.camera_ok) {
             camFailStreak = 0;
-            // Face OK — force phone QR once (phone is always compulsory)
-            if (!pairedNow && setupMode === "webcam" && !autoPhoneAfterFace) {
+            // Webcam came back after a false “no camera” switch — return to PC camera check.
+            if (setupMode === "phone" && autoPhoneSwitched) {
+              autoPhoneSwitched = false;
+              setSetupMode("webcam");
+            } else if (!pairedNow && setupMode === "webcam" && !autoPhoneAfterFace) {
+              // Face path active — show phone QR once (secondary camera, not identity skip)
               autoPhoneAfterFace = true;
               setSetupMode("phone");
             }
