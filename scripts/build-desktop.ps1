@@ -50,14 +50,23 @@ if (Test-Path $LaunchSrc) {
   Write-Host "Launcher: $LaunchDst"
 }
 
+# Ship Railway/API settings next to the EXE when present
+$EnvSrc = Join-Path $Desktop ".env"
+$EnvDst = Join-Path $Dist "IntelliQuizDesktop\.env"
+if (Test-Path $EnvSrc) {
+  Copy-Item $EnvSrc $EnvDst -Force
+  Write-Host "Env:     $EnvDst"
+}
+
 $Readme = @"
 IntelliQuiz Desktop
 ===================
 1. Unzip this WHOLE folder (keep _internal next to the .exe).
 2. Double-click "Launch IntelliQuiz.bat" (recommended), or IntelliQuizDesktop.exe.
 3. Keep the console window open during the exam.
-4. Optional: create a .env file here with:
-   IQ_DESKTOP_API_BASE_URL=http://YOUR-SERVER:8080/api/v1
+4. Optional: edit .env next to the EXE:
+   IQ_DESKTOP_API_BASE_URL=https://YOUR-SERVER/api/v1
+   IQ_DESKTOP_API_VERIFY_SSL=true
 "@
 Set-Content -Path (Join-Path $Dist "IntelliQuizDesktop\README.txt") -Value $Readme -Encoding UTF8
 
