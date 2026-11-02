@@ -28,13 +28,34 @@ def _exe_dir() -> Path:
     return Path.cwd()
 
 
+def _env_files() -> tuple[str, ...]:
+    """Prefer cwd/.env, then desktop/.env next to the package (dev), then EXE dir."""
+    candidates = [
+        _exe_dir() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",  # desktop/.env in repo
+    ]
+    found: list[str] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.is_file():
+            found.append(str(path))
+    # Always include cwd path last so pydantic can still look there if created later.
+    if not found:
+        found.append(str(_exe_dir() / ".env"))
+    return tuple(found)
+
+
 _PKG = _pkg_dir()
 _ROOT = _resource_root()
 
 
 class DesktopSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(_exe_dir() / ".env"),
+        env_file=_env_files(),
         env_prefix="IQ_DESKTOP_",
         extra="ignore",
     )

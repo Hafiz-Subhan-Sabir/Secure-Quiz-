@@ -631,10 +631,16 @@
                   <span class="pair-chip" id="chipCam">2 · Allow camera</span>
                   <span class="pair-chip" id="chipLive">3 · Stay paired</span>
                 </div>
-                <div class="qr-box"><img id="qrImg" alt="Phone camera QR" /></div>
-                <div class="url-box" id="qrUrlBox">Generating phone link…</div>
-                <button type="button" class="ghost" id="btnCopyUrl" style="margin-bottom:0.5rem">Copy phone link</button>
-                <p class="note" id="qrEndpoint">Same router / Wi‑Fi. Guest networks often fail.</p>
+                <div id="pairPending">
+                  <div class="qr-box"><img id="qrImg" alt="Phone camera QR" /></div>
+                  <div class="url-box" id="qrUrlBox">Generating phone link…</div>
+                  <button type="button" class="ghost" id="btnCopyUrl" style="margin-bottom:0.5rem">Copy phone link</button>
+                  <p class="note" id="qrEndpoint">Same router / Wi‑Fi. Guest networks often fail.</p>
+                </div>
+                <div id="pairSuccess" class="hidden" style="margin:0.75rem 0;padding:1rem;border-radius:12px;background:rgba(31,122,77,0.12);border:1px solid rgba(31,122,77,0.28)">
+                  <p style="margin:0;font-weight:700;color:var(--ok)">Phone paired ✓</p>
+                  <p class="note" id="pairSuccessHint" style="margin:0.4rem 0 0">Keep the IntelliQuiz camera page open on your phone.</p>
+                </div>
                 <button type="button" class="linkish" id="btnSwitchWebcam">← Back to PC webcam</button>
                 <p class="note" style="margin-top:0.75rem"><strong>Phone pairing is required</strong> for every exam. If this PC has a webcam, you must also pass the PC face check — phone alone is not enough.</p>
               </div>
@@ -685,11 +691,11 @@
                 </ul>
               </div>
               <div class="side-panel" style="margin-top:0.75rem">
-                <h2>Webcam</h2>
+                <h2 id="examCamTitle">Identity camera</h2>
                 <div class="cam" id="examCam" style="aspect-ratio:4/3">
                   <div class="placeholder" id="examPlaceholder" style="font-size:0.8rem">No live frame</div>
-                  <img id="examImg" alt="Exam webcam" />
-                  <span class="label">Auto-capture on</span>
+                  <img id="examImg" alt="Exam camera" />
+                  <span class="label" id="examCamLabel">Auto-capture on</span>
                 </div>
               </div>
               <div class="side-panel" style="margin-top:0.75rem">
@@ -1002,9 +1008,15 @@
         bindCamImg("faceImg", "camPlaceholder");
         bindCamImg("examImg", "examPlaceholder");
         const tick = () => {
-          const url = `/api/camera.jpg?t=${Date.now()}`;
-          if (phase === "setup" && setupMode === "webcam") $("faceImg").src = url;
-          if (phase === "exam") $("examImg").src = url;
+          // Never fall back to phone frames on the PC webcam panel (wrong-image bug).
+          if (phase === "setup" && setupMode === "webcam") {
+            $("faceImg").src = `/api/camera.jpg?source=webcam&t=${Date.now()}`;
+          }
+          if (phase === "exam") {
+            const ident = (lastStatus && lastStatus.identity_source) || "webcam";
+            const src = ident === "phone" ? "phone" : "webcam";
+            $("examImg").src = `/api/camera.jpg?source=${src}&t=${Date.now()}`;
+          }
         };
         tick();
         camTimer = setInterval(tick, 500);
@@ -1240,6 +1252,24 @@
         scan.textContent = paired || live ? "1 · QR opened" : "1 · Scan QR";
         cam.textContent = live ? "2 · Camera on" : "2 · Allow camera";
         liveEl.textContent = paired && live ? "3 · Paired ✓" : "3 · Stay paired";
+
+        const pending = $("pairPending");
+        const success = $("pairSuccess");
+        const hint = $("pairSuccessHint");
+        if (pending && success) {
+          pending.classList.toggle("hidden", !!paired);
+          success.classList.toggle("hidden", !paired);
+          if (paired && hint) {
+            const mon = (st && st.monitor) || {};
+            if (mon.camera_ok && mon.face_count !== 1) {
+              hint.textContent = "Keep phone open. Next: center one face on the PC webcam, then Start quiz.";
+            } else if (mon.camera_ok) {
+              hint.textContent = "Keep phone open. Face check + phone are ready — tap Start quiz.";
+            } else {
+              hint.textContent = "Keep the IntelliQuiz camera page open — tap Start quiz when ready.";
+            }
+          }
+        }
       }
 
       function updateChecklist(st) {
@@ -1397,6 +1427,14 @@
         $("sPhone").textContent = paired ? "paired" : "not paired";
         $("sRisk").textContent = riskPct + "%";
         $("sRisk").className = riskPct >= 65 ? "bad" : riskPct >= 40 ? "mid" : "ok";
+        const camTitle = $("examCamTitle");
+        const camLabel = $("examCamLabel");
+        if (camTitle) {
+          camTitle.textContent = st.identity_source === "phone" ? "Phone camera" : "PC webcam";
+        }
+        if (camLabel) {
+          camLabel.textContent = st.identity_source === "phone" ? "Phone · live" : "PC · auto-capture";
+        }
 
         renderEvidence(mon.last_evidence || []);
         updateChecklist(st);
@@ -1405,24 +1443,42 @@
         syncFooter();
 
         // No webcam → phone mode (after webcam open timeout). Webcam OK but unpaired → show QR.
-        // Wait long enough for Windows webcam open (~4s) before treating camera as missing.
+        // Wait long enough for Windows webcam open (~10s) before treating camera as missing.
         if (phase === "setup") {
           const pairedNow = !!(st.android_paired || pair.paired);
+          const faceOk = !!mon.camera_ok && mon.face_count === 1;
+
+          // After phone pairs: leave the QR step. If PC cam still needs a face, go there.
+          if (pairedNow && setupMode === "phone") {
+            if (mon.camera_ok && !faceOk) {
+              autoPhoneAfterFace = true;
+              autoPhoneSwitched = false;
+              setSetupMode("webcam");
+              const alertEl = $("setupErr");
+              if (alertEl) {
+                alertEl.textContent = "Phone paired ✓ — center one face on the PC camera, then Start quiz.";
+                alertEl.classList.remove("hidden");
+                alertEl.style.color = "var(--ok, #1f7a4d)";
+              }
+            }
+          }
+
           if (setupMode === "webcam" && !mon.camera_ok) {
             camFailStreak += 1;
-            if (!autoPhoneSwitched && camFailStreak >= 6) {
+            if (!autoPhoneSwitched && camFailStreak >= 12) {
               autoPhoneSwitched = true;
               setSetupMode("phone");
               $("setupErr").classList.add("hidden");
             }
           } else if (mon.camera_ok) {
             camFailStreak = 0;
-            // Webcam came back after a false “no camera” switch — return to PC camera check.
-            if (setupMode === "phone" && autoPhoneSwitched) {
+            // Webcam came back after a false “no camera” switch — return to PC camera check
+            // only when phone is not yet paired (otherwise stay on progress).
+            if (setupMode === "phone" && autoPhoneSwitched && !pairedNow) {
               autoPhoneSwitched = false;
               setSetupMode("webcam");
-            } else if (!pairedNow && setupMode === "webcam" && !autoPhoneAfterFace) {
-              // Face path active — show phone QR once (secondary camera, not identity skip)
+            } else if (!pairedNow && setupMode === "webcam" && !autoPhoneAfterFace && faceOk) {
+              // Face already good — show phone QR once for secondary camera.
               autoPhoneAfterFace = true;
               setSetupMode("phone");
             }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   api,
@@ -6,17 +6,28 @@ import {
   formatWhen,
   riskLabel,
   type AttemptSummary,
+  type StudentAccount,
 } from "@/shared/api/client";
 
 export function AttemptsPage() {
   const [attempts, setAttempts] = useState<AttemptSummary[]>([]);
+  const [students, setStudents] = useState<StudentAccount[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "flagged">("flagged");
   const [clearing, setClearing] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [createdMsg, setCreatedMsg] = useState<string | null>(null);
 
   async function refresh(signal?: AbortSignal) {
-    const list = await api.listAttempts(signal);
+    const [list, accounts] = await Promise.all([
+      api.listAttempts(signal),
+      api.listStudents(signal),
+    ]);
     setAttempts(list);
+    setStudents(accounts);
     if (!list.some((a) => a.flagged)) setFilter("all");
   }
 
@@ -28,6 +39,42 @@ export function AttemptsPage() {
     });
     return () => ac.abort();
   }, []);
+
+  async function onCreateStudent(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    setCreatedMsg(null);
+    try {
+      const created = await api.createStudent({
+        full_name: fullName.trim(),
+        email: email.trim(),
+        password,
+      });
+      setFullName("");
+      setEmail("");
+      setPassword("");
+      setCreatedMsg(`Added ${created.full_name} (${created.email}). They can sign in on the Desktop app.`);
+      setStudents(await api.listStudents());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add student.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeStudent(id: string, name: string) {
+    if (!window.confirm(`Remove login for ${name}? Past exam reports stay until you clear them.`)) {
+      return;
+    }
+    setError(null);
+    try {
+      await api.deleteStudent(id);
+      setStudents((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove student.");
+    }
+  }
 
   async function clearAllReports() {
     if (
@@ -69,6 +116,73 @@ export function AttemptsPage() {
 
   return (
     <>
+      <section className="panel" style={{ marginBottom: "1.25rem" }}>
+        <h2 style={{ marginTop: 0 }}>Add student</h2>
+        <p className="status" style={{ marginTop: 0 }}>
+          Create a login for the Desktop exam app. Students do not use this admin website for quizzes.
+        </p>
+        <form className="stack-form" onSubmit={(e) => void onCreateStudent(e)}>
+          <label className="field">
+            <span>Full name</span>
+            <input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Ali Khan"
+              required
+            />
+          </label>
+          <label className="field">
+            <span>Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="ali@school.edu"
+              required
+            />
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input
+              type="text"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 6 characters"
+              minLength={6}
+              required
+            />
+          </label>
+          <button type="submit" className="primary-btn" disabled={saving}>
+            {saving ? "Adding…" : "Add student"}
+          </button>
+        </form>
+        {createdMsg ? <p className="status" style={{ color: "var(--ok)" }}>{createdMsg}</p> : null}
+
+        <h3 style={{ marginTop: "1.25rem" }}>Student logins ({students.length})</h3>
+        {students.length ? (
+          <ul className="plain-list stacked">
+            {students.map((s) => (
+              <li key={s.id}>
+                <strong>{s.full_name}</strong>
+                <p>
+                  {s.email}
+                  <button
+                    type="button"
+                    className="ghost-btn compact"
+                    style={{ marginLeft: "0.75rem" }}
+                    onClick={() => void removeStudent(s.id, s.full_name)}
+                  >
+                    Remove
+                  </button>
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-state">No student accounts yet — add one above.</p>
+        )}
+      </section>
+
       <div className="toolbar">
         <div className="seg">
           <button
@@ -76,7 +190,7 @@ export function AttemptsPage() {
             className={filter === "all" ? "seg-on" : ""}
             onClick={() => setFilter("all")}
           >
-            All ({attempts.length})
+            Attempts ({attempts.length})
           </button>
           <button
             type="button"
@@ -155,7 +269,7 @@ export function AttemptsPage() {
           );
         })}
         {!visible.length && !error ? (
-          <p className="empty-state">No students yet.</p>
+          <p className="empty-state">No attempts yet. Students take exams on the Desktop app.</p>
         ) : null}
       </div>
     </>

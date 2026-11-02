@@ -119,7 +119,9 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/phase/exam")
-    def phase_exam(require_pair: bool = False) -> dict[str, Any]:
+    def phase_exam(require_pair: bool | None = None) -> dict[str, Any]:
+        # Default None → SessionController applies require_android_camera_always.
+        # Do not default to False or phone pairing can be skipped by accident.
         try:
             return ctrl.enter_exam(require_pair=require_pair)
         except Exception as exc:
@@ -191,18 +193,36 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
         return ctrl.simulate_abnormal()
 
     @app.get("/api/camera.jpg")
-    def camera_jpeg() -> Response:
-        # Prefer PC webcam; if student paired by phone (or webcam is busy/missing),
-        # fall back to the latest phone frame so the UI does not spam 404.
-        data = ctrl.monitor.latest_jpeg()
-        if not data:
+    def camera_jpeg(source: str = "auto") -> Response:
+        """Serve a live JPEG. source=webcam|phone|auto.
+
+        Webcam panel must use source=webcam so a phone frame is never shown as
+        "PC webcam" (client complaint about wrong image).
+        """
+        src = (source or "auto").strip().lower()
+        data = None
+        used = ""
+        if src in ("auto", "webcam"):
+            data = ctrl.monitor.latest_jpeg()
+            if data:
+                used = "webcam"
+        if not data and src in ("auto", "phone"):
             try:
                 data = ctrl.pairing.latest_jpeg()
             except Exception:
                 data = None
+            if data:
+                used = "phone"
         if not data:
             raise HTTPException(status_code=404, detail="No camera frame yet")
-        return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        return Response(
+            content=data,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Camera-Source": used or src,
+            },
+        )
 
     @app.websocket("/ws/pair")
     async def ws_pair(websocket: WebSocket) -> None:

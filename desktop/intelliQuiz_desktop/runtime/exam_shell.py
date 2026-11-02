@@ -21,6 +21,7 @@ class ExamShell:
     pid: int = 0
     browser: str = ""
     profile_dir: Path = field(default_factory=default_exam_profile_dir)
+    was_launched: bool = False
 
     def launch(self, url: str, *, kiosk: bool = True, profile_dir: Path | None = None) -> bool:
         self.close()
@@ -44,10 +45,32 @@ class ExamShell:
                 self.process = proc
                 self.pid = int(proc.pid or 0)
                 self.browser = label
+                self.was_launched = True
                 return True
             except Exception:
                 continue
         return False
+
+    def living_pids(self) -> set[int]:
+        """PIDs still running the exam browser profile (Edge/Chrome often reparent)."""
+        pids: set[int] = set()
+        if self.process is not None and self.process.poll() is None and self.pid:
+            pids.add(int(self.pid))
+        try:
+            from intelliQuiz_desktop.runtime.app_lock import _pids_matching_cmdline
+
+            marker = str(self.profile_dir.resolve())
+            pids |= _pids_matching_cmdline({marker})
+        except Exception:
+            pass
+        if pids and not self.pid:
+            self.pid = next(iter(pids))
+        elif pids and self.pid not in pids:
+            self.pid = next(iter(pids))
+        return pids
+
+    def is_alive(self) -> bool:
+        return bool(self.living_pids())
 
     def close(self) -> None:
         if self.process and self.process.poll() is None:
@@ -62,6 +85,7 @@ class ExamShell:
         self.process = None
         self.pid = 0
         self.browser = ""
+        # Keep was_launched so lockdown does not open a fresh login window.
 
 
 def _edge(exe: str, url: str, *, kiosk: bool, profile_dir: str) -> list[str]:

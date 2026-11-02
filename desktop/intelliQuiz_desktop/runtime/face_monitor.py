@@ -210,37 +210,79 @@ class FaceMonitor:
             return
 
         cap = None
-        # Open webcam with a hard timeout — Windows drivers can hang forever with no camera
+        # Open webcam with a hard timeout — Windows drivers can hang forever with no camera.
+        # Try configured index first, then nearby indices (XPS/USB cams are often not index 0).
         opened: list = []
+        used_index = self.settings.camera_index
+
+        def _frame_looks_valid(capture) -> bool:
+            try:
+                ok_f, frm = capture.read()
+                if not ok_f or frm is None or getattr(frm, "size", 0) == 0:
+                    return False
+                # Reject all-black / near-empty frames from wrong device nodes.
+                mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
+                return mean > 2.0
+            except Exception:
+                return False
 
         def _open_cam() -> None:
             import cv2 as _cv2
 
-            for backend in (getattr(_cv2, "CAP_MSMF", 700), getattr(_cv2, "CAP_DSHOW", 700), 0):
+            preferred = int(self.settings.camera_index)
+            indices = [preferred] + [i for i in range(0, 4) if i != preferred]
+            backends = (
+                getattr(_cv2, "CAP_DSHOW", 700),
+                getattr(_cv2, "CAP_MSMF", 700),
+                0,
+            )
+            for idx in indices:
                 if self._stop.is_set():
                     return
-                try:
-                    trial = _cv2.VideoCapture(self.settings.camera_index, backend)
-                    if trial.isOpened():
-                        opened.append(trial)
+                for backend in backends:
+                    if self._stop.is_set():
                         return
-                    trial.release()
-                except Exception:
-                    continue
-            try:
-                trial = _cv2.VideoCapture(self.settings.camera_index)
-                if trial.isOpened():
-                    opened.append(trial)
-                else:
-                    trial.release()
-            except Exception:
-                pass
+                    trial = None
+                    try:
+                        trial = _cv2.VideoCapture(idx, backend)
+                        if not trial.isOpened():
+                            trial.release()
+                            continue
+                        try:
+                            trial.set(_cv2.CAP_PROP_FRAME_WIDTH, 640)
+                            trial.set(_cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                            trial.set(_cv2.CAP_PROP_BUFFERSIZE, 1)
+                        except Exception:
+                            pass
+                        # Warm up a couple reads — first frame is often blank on Windows.
+                        warm_ok = False
+                        for _ in range(4):
+                            if _frame_looks_valid(trial):
+                                warm_ok = True
+                                break
+                            time.sleep(0.05)
+                        if warm_ok:
+                            opened.append((trial, idx))
+                            return
+                        trial.release()
+                    except Exception:
+                        if trial is not None:
+                            try:
+                                trial.release()
+                            except Exception:
+                                pass
 
         opener = threading.Thread(target=_open_cam, name="webcam-open", daemon=True)
         opener.start()
-        opener.join(timeout=4.0)
+        opener.join(timeout=10.0)
         if opened:
-            cap = opened[0]
+            cap, used_index = opened[0]
+            # Release any extra trials that raced in (should not happen, but be safe).
+            for extra, _idx in opened[1:]:
+                try:
+                    extra.release()
+                except Exception:
+                    pass
         if cap is None or not cap.isOpened():
             with self._lock:
                 self.snapshot.message = "Webcam unavailable"
@@ -248,17 +290,9 @@ class FaceMonitor:
                 self.snapshot.running = True
             return
 
-        # Prefer a modest resolution for stable FPS on student laptops
-        try:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        except Exception:
-            pass
-
         with self._lock:
             self.snapshot.camera_ok = True
-            self.snapshot.message = "Monitoring"
+            self.snapshot.message = f"Monitoring (cam {used_index})"
 
         interval = 1.0 / max(0.5, self.settings.monitor_fps)
         fail_reads = 0
@@ -341,6 +375,7 @@ class FaceMonitor:
 
         self._ema_risk = (0.65 * self._ema_risk) + (0.35 * risk)
 
+        now = time.time()
         with self._lock:
             self.snapshot.face_count = analysis.face_count
             self.snapshot.looking_away = analysis.looking_away
@@ -381,7 +416,6 @@ class FaceMonitor:
             event_type = "gesture_risk"
 
         should_capture = risk >= self.settings.gesture_capture_threshold or analysis.looking_away
-        now = time.time()
         cooled = (now - self._last_capture_at) >= self.settings.capture_cooldown_sec
 
         if should_capture and cooled:

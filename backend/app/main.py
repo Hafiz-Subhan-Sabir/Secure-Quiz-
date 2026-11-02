@@ -19,6 +19,7 @@ from app.modules.reports.router import router as reports_router
 from app.modules.schemas import HealthResponse
 from app.modules.sessions.router import router as sessions_router
 from app.modules.sync.router import router as sync_router
+from app.modules.users.router import router as users_router
 from app.seed import seed_if_empty
 
 
@@ -68,6 +69,7 @@ def create_app() -> FastAPI:
         return HealthResponse(status="ok", service=settings.app_name, version=settings.app_version)
 
     app.include_router(auth_router, prefix=api)
+    app.include_router(users_router, prefix=api)
     app.include_router(exams_router, prefix=api)
     app.include_router(proctoring_router, prefix=api)
     app.include_router(sessions_router, prefix=api)

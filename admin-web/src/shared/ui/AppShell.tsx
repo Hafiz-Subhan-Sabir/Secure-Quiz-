@@ -12,7 +12,7 @@ const TITLES: Record<string, { title: string; hint: string }> = {
   },
   "/attempts": {
     title: "Students",
-    hint: "Pick a student to review",
+    hint: "Add logins · review attempts",
   },
   "/proctoring": {
     title: "Rules",

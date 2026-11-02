@@ -84,6 +84,14 @@ export type AttemptSummary = {
   quiz_percent?: number;
 };
 
+export type StudentAccount = {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  created_at?: string | null;
+};
+
 type RequestOpts = RequestInit & { signal?: AbortSignal };
 
 function authHeaders(): HeadersInit {
@@ -229,6 +237,19 @@ export const api = {
       method: "DELETE",
       signal,
     }),
+  listStudents: (signal?: AbortSignal) =>
+    request<StudentAccount[]>("/users", { signal }),
+  createStudent: (
+    body: { email: string; full_name: string; password: string },
+    signal?: AbortSignal,
+  ) =>
+    request<StudentAccount>("/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+  deleteStudent: (userId: string, signal?: AbortSignal) =>
+    request<void>(`/users/${userId}`, { method: "DELETE", signal }),
   getReport: (sessionId: string, signal?: AbortSignal) =>
     request<IntegrityReport>(`/reports/sessions/${sessionId}`, { signal }),
 };

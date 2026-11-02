@@ -155,14 +155,27 @@ class SessionController:
             return {"ok": True, "enrolled": True, "message": "Already enrolled"}
 
         prefer = (source or "auto").strip().lower()
-        mon = self.monitor.status()
         pair = self.pairing.status()
         phone_ready = bool(pair.get("paired"))
 
         if prefer == "phone":
             return self._enroll_from_phone(email=email, samples=samples)
 
-        # No webcam (or already on phone path): do not block 20s waiting for a missing camera
+        # Start webcam before judging camera_ok — otherwise first enroll always fails.
+        if not self.monitor.snapshot.running:
+            self.monitor.start("identity-enroll")
+        cam_deadline = time.time() + 10.0
+        while time.time() < cam_deadline:
+            mon = self.monitor.status()
+            if mon.get("camera_ok"):
+                break
+            # If phone already paired, don't wait the full open timeout.
+            if prefer == "auto" and phone_ready and time.time() > cam_deadline - 6.0:
+                break
+            time.sleep(0.25)
+
+        mon = self.monitor.status()
+        # No webcam (or already on phone path): do not block forever waiting for a missing camera
         if prefer == "auto" and not mon.get("camera_ok"):
             if phone_ready:
                 return self._enroll_from_phone(email=email, samples=samples)
@@ -170,9 +183,6 @@ class SessionController:
                 "No PC webcam detected. Tap “Use phone to enroll”, scan the QR, "
                 "or tap “Skip for now — use phone at camera step”."
             )
-
-        if not self.monitor.snapshot.running:
-            self.monitor.start("identity-enroll")
 
         captured: list = []
         deadline = time.time() + 12.0
@@ -304,22 +314,23 @@ class SessionController:
     def _arm_app_lock(self, *, student_message: str | None = None) -> list[str]:
         """Close blocked apps / other browsers and keep only the exam Edge/Chrome profile."""
         allowed = {os.getpid()}
-        host = (
-            "127.0.0.1"
-            if self.settings.local_ui_host in ("0.0.0.0", "::")
-            else self.settings.local_ui_host
-        )
-        url = f"http://{host}:{self.settings.local_ui_port}/"
-        living = self.exam_shell.process is not None and self.exam_shell.process.poll() is None
-        if not living:
-            self.exam_shell.launch(url, kiosk=False)
+        # Never relaunch the exam browser here. Edge/Chrome often reparents so the
+        # original Popen pid dies while the window stays open; launching again opens
+        # a second window that resets to the login screen (client complaint B3).
+        living_pids = self.exam_shell.living_pids()
+        allowed |= living_pids
         if self.exam_shell.pid:
             allowed.add(self.exam_shell.pid)
         marker = str(self.exam_shell.profile_dir.resolve())
         self.app_lock.set_protected_cmdline_markers({marker})
         self.app_lock.set_allowed_pids(allowed)
         self.focus_guard.set_allowed_pids(allowed)
-        killed_browsers = self.app_lock.force_clear_other_browsers()
+        # Only mass-kill other browsers when we can see the exam profile PID.
+        # If Edge/Chrome reparented and PID scan is empty, force-clear can close
+        # the exam window itself (looks like a random logout / blank restart).
+        killed_browsers: list[str] = []
+        if living_pids:
+            killed_browsers = self.app_lock.force_clear_other_browsers()
         self.app_lock.start()
         self.focus_guard.start()
         hits, killed = self.app_lock.enforce_once()
