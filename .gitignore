@@ -26,3 +26,8 @@ android/local.properties
 admin-web/dist/
 
 downloads/
+releases/
+desktop/dist/
+desktop/build/
+downloads/*.apk
+android/app/build/
