@@ -1600,7 +1600,8 @@
               const st = await api("/api/status");
               if (!(st.monitor && st.monitor.camera_ok)) {
                 await startPhoneEnroll();
-                $("loginErr").textContent = "No PC webcam — scan the QR with your phone, then tap Enroll face from phone.";
+                $("loginErr").textContent =
+                  "PC webcam not available (close Windows Camera / Zoom / Teams first, or use phone). Scan the QR, allow camera, look at your face, then tap Enroll.";
                 $("loginErr").classList.remove("hidden");
                 syncFooter();
                 return;

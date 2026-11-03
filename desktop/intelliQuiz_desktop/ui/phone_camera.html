@@ -188,7 +188,8 @@
 
       const $ = (id) => document.getElementById(id);
       let stream = null;
-      let facing = "environment";
+      // Face enrollment needs the front camera; exam room monitoring uses the back camera.
+      let facing = (sessionId || "").startsWith("enroll-") ? "user" : "environment";
       let ws = null;
       let paired = false;
       let frameTimer = null;
@@ -450,11 +451,16 @@
             if (data.type === "pair_ok") {
               paired = true;
               setBanner("Paired · camera locked for exam", "ok");
-              $("status").textContent = "Success — go back to the computer and tap Start quiz";
+              $("status").textContent = "Success — go back to the computer and continue";
               $("doneNote").classList.add("show");
               $("btnStart").textContent = "Paired — leave this open";
             } else if (data.type === "pair_fail") {
-              setBanner("Pairing failed — scan the QR again", "err");
+              const reload = data.reload_url || "";
+              setBanner("Pairing failed — QR was refreshed on the PC", "err");
+              $("status").textContent = "Open the latest QR link from the computer";
+              if (reload && reload.startsWith("https://") && reload !== location.href.split("#")[0]) {
+                setTimeout(() => { location.replace(reload); }, 600);
+              }
             }
           } catch { /* ignore */ }
         };

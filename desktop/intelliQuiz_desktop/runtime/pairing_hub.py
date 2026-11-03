@@ -72,7 +72,14 @@ class PairingHub:
         self._last_desktop_frame_ts = ""
         self._latest_jpeg: bytes | None = None
 
-    def begin_session(self, *, session_id: str, pairing_token: str, exam_code: str | None = None) -> dict[str, Any]:
+    def begin_session(
+        self,
+        *,
+        session_id: str,
+        pairing_token: str,
+        exam_code: str | None = None,
+        preserve_live: bool = False,
+    ) -> dict[str, Any]:
         lan = discover_lan_ip()
         # Phone browsers block camera on plain http://LAN — use HTTPS + WSS on the phone port.
         endpoint = f"wss://{lan}:{self.phone_https_port}/ws/pair"
@@ -95,9 +102,18 @@ class PairingHub:
         if not mobile_url.startswith("https://"):
             raise RuntimeError("Mobile camera QR must be an https:// URL for phone camera access")
         with self._lock:
+            keep_paired = bool(
+                preserve_live
+                and self.state.paired
+                and self.state.session_id == session_id
+                and self.state.pairing_token == pairing_token
+            )
+            keep_jpeg = self._latest_jpeg if keep_paired else None
+            keep_frames = self._phone_frame_count if keep_paired else 0
+            keep_alive = self.state.last_alive_at if keep_paired else 0.0
             self.state = PairingState(
                 active=True,
-                paired=False,
+                paired=keep_paired,
                 session_id=session_id,
                 pairing_token=pairing_token,
                 qr_payload=payload,
@@ -105,11 +121,18 @@ class PairingHub:
                 qr_text=mobile_url,
                 desktop_endpoint=endpoint,
                 mobile_camera_url=mobile_url,
-                last_alive_at=0.0,
-                camera_live=False,
+                last_alive_at=keep_alive,
+                camera_live=keep_paired,
+                android_frames=keep_frames if keep_paired else 0,
+                last_android_message=(
+                    self.state.last_android_message
+                    if keep_paired
+                    else ""
+                ),
             )
-            self._latest_jpeg = None
-            self._phone_frame_count = 0
+            self._latest_jpeg = keep_jpeg
+            if not keep_paired:
+                self._phone_frame_count = 0
         # Phone pairing uses FastAPI WSS on the HTTPS phone port (8767), not this legacy WS.
         # Keep PairingHub as state + message handler only.
         return self.status()
@@ -320,7 +343,17 @@ class PairingHub:
                 if self.on_paired:
                     self.on_paired()
             else:
-                await self._send(websocket, {"type": "pair_fail", "reason": "token_mismatch"})
+                with self._lock:
+                    reload_url = self.state.mobile_camera_url
+                await self._send(
+                    websocket,
+                    {
+                        "type": "pair_fail",
+                        "reason": "token_mismatch",
+                        "message": "QR was refreshed on the PC — open the latest link",
+                        "reload_url": reload_url,
+                    },
+                )
             return
 
         if msg_type == "frame_meta":

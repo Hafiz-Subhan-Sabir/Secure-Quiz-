@@ -114,28 +114,48 @@ class SessionController:
             "pairing": pair,
         }
 
-    def begin_enrollment_pairing(self) -> dict[str, Any]:
-        """Start a phone QR session before an exam so identity can enroll from phone."""
+    def begin_enrollment_pairing(self, *, force_new: bool = False) -> dict[str, Any]:
+        """Start a phone QR session before an exam so identity can enroll from phone.
+
+        Reuses the current enroll session/token when already active so a Refresh
+        (or auto “no webcam” switch) does not invalidate a phone that already
+        opened the previous QR — that was causing WS connect + enroll 400.
+        """
         import secrets
         import uuid
 
         with self._lock:
             email = self.state.email
+            existing_sid = self.state.session_id or ""
+            existing_tok = self.state.pairing_token or ""
         if not email:
             raise RuntimeError("Sign in before phone enrollment")
-        session_id = f"enroll-{uuid.uuid4().hex[:12]}"
-        token = secrets.token_urlsafe(18)
-        with self._lock:
-            # Keep enroll pairing ids until a real exam overwrites them
-            if not self.state.session_id or self.state.session_id.startswith("enroll-"):
-                self.state.session_id = session_id
-                self.state.pairing_token = token
+
+        pair_now = self.pairing.status()
+        reuse = (
+            not force_new
+            and existing_sid.startswith("enroll-")
+            and bool(existing_tok)
+            and bool(pair_now.get("active") or pair_now.get("paired") or pair_now.get("mobile_camera_url"))
+        )
+        if reuse:
+            session_id = existing_sid
+            token = existing_tok
+        else:
+            session_id = f"enroll-{uuid.uuid4().hex[:12]}"
+            token = secrets.token_urlsafe(18)
+            with self._lock:
+                if not self.state.session_id or self.state.session_id.startswith("enroll-"):
+                    self.state.session_id = session_id
+                    self.state.pairing_token = token
+
         pairing = self.pairing.begin_session(
             session_id=session_id,
             pairing_token=token,
             exam_code="Face enrollment",
+            preserve_live=reuse,
         )
-        return {"ok": True, "pairing": pairing}
+        return {"ok": True, "pairing": pairing, "reused": reuse}
 
     def defer_enrollment_to_phone(self) -> dict[str, Any]:
         """Skip PC webcam enroll; student will use phone camera at the exam camera step."""
@@ -299,6 +319,9 @@ class SessionController:
             self.state.role = data["role"]
             self.state.error = ""
             self.state.identity_deferred_phone = False
+        # Open webcam early so enroll/setup does not race a cold camera open.
+        if not self.monitor.snapshot.running:
+            self.monitor.start("identity-enroll")
         return {
             "ok": True,
             "role": data["role"],

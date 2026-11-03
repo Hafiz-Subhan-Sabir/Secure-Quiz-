@@ -206,22 +206,31 @@ class FaceMonitor:
             self.snapshot.message = plain_language or self.snapshot.message
         return payload
 
-    def _frame_looks_valid(self, capture) -> bool:
+    def _frame_looks_valid(self, capture, *, strict: bool = True) -> bool:
         try:
             ok_f, frm = capture.read()
             if not ok_f or frm is None or getattr(frm, "size", 0) == 0:
                 return False
+            if not strict:
+                return True
             mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
-            return mean > 2.0
+            # Some laptop cams return very dark first frames; 0.5 is enough to
+            # reject empty buffers without rejecting a dim room.
+            return mean > 0.5
         except Exception:
             return False
 
     def _try_open_camera(self) -> tuple[Any, int] | tuple[None, int]:
-        """Try camera indices/backends once. Never leave a handle open on failure."""
+        """Try camera indices/backends once. Never leave a handle open on failure.
+
+        Windows only allows one app to own the webcam. If Windows Camera / Zoom /
+        Teams is open, OpenCV will fail even though the hardware works.
+        """
         import cv2 as _cv2
 
         preferred = int(self.settings.camera_index)
         indices = [preferred] + [i for i in range(0, 5) if i != preferred]
+        # DirectShow first on Windows — MSMF often fails while Camera app works.
         backends = (
             getattr(_cv2, "CAP_DSHOW", 700),
             getattr(_cv2, "CAP_MSMF", 1400),
@@ -246,11 +255,12 @@ class FaceMonitor:
                     except Exception:
                         pass
                     warm_ok = False
-                    for _ in range(6):
-                        if self._frame_looks_valid(trial):
+                    for i in range(20):
+                        # After several blank frames, accept any readable frame.
+                        if self._frame_looks_valid(trial, strict=(i < 12)):
                             warm_ok = True
                             break
-                        time.sleep(0.05)
+                        time.sleep(0.08)
                     if warm_ok:
                         return trial, idx
                     trial.release()
@@ -307,7 +317,10 @@ class FaceMonitor:
 
             if not opened:
                 with self._lock:
-                    self.snapshot.message = "Webcam unavailable — close Zoom/Teams/browser tabs using the camera, then Retry"
+                    self.snapshot.message = (
+                        "Webcam locked — close Windows Camera, Zoom, Teams, or browser "
+                        "tabs using the camera, then tap Retry webcam"
+                    )
                     self.snapshot.camera_ok = False
                 # Wait and retry automatically (also serves the Retry button via restart()).
                 for _ in range(20):
