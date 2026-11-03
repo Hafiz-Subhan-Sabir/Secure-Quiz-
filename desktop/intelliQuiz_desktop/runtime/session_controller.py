@@ -18,6 +18,7 @@ from intelliQuiz_desktop.runtime.exam_shell import ExamShell
 from intelliQuiz_desktop.runtime.face_monitor import FaceMonitor
 from intelliQuiz_desktop.runtime.focus_guard import FocusGuard
 from intelliQuiz_desktop.runtime.pairing_hub import PairingHub
+from intelliQuiz_desktop.runtime.workers import shutdown_workers, submit_sync
 from intelliQuiz_desktop.security.identity import embedding_from_jpeg, merge_samples, verify
 from intelliQuiz_desktop.storage.identity_store import IdentityStore
 from intelliQuiz_desktop.storage.event_store import EncryptedEventStore
@@ -92,6 +93,7 @@ class SessionController:
 
         self._hb_stop = threading.Event()
         self._hb_thread: threading.Thread | None = None
+        self.sync.start()
         self._flush_pending_sync()
 
     def identity_status(self) -> dict[str, Any]:
@@ -345,18 +347,30 @@ class SessionController:
         if self.exam_shell.pid:
             allowed.add(self.exam_shell.pid)
         marker = str(self.exam_shell.profile_dir.resolve())
+        self.app_lock.set_protect_dev_tools(bool(getattr(self.settings, "app_lock_protect_dev", False)))
         self.app_lock.set_protected_cmdline_markers({marker})
         self.app_lock.set_allowed_pids(allowed)
         self.focus_guard.set_allowed_pids(allowed)
-        # Only mass-kill other browsers when we can see the exam profile PID.
-        # If Edge/Chrome reparented and PID scan is empty, force-clear can close
-        # the exam window itself (looks like a random logout / blank restart).
+        # Always enforce hard/helper kills. Browser force-clear needs either a
+        # known exam profile PID or a successful cmdline marker match so we do
+        # not kill the exam window itself.
         killed_browsers: list[str] = []
-        if living_pids:
+        protected_ok = bool(living_pids) or bool(
+            self.app_lock._protected_pids() - {os.getpid()}  # noqa: SLF001
+        )
+        if protected_ok:
             killed_browsers = self.app_lock.force_clear_other_browsers()
         self.app_lock.start()
         self.focus_guard.start()
         hits, killed = self.app_lock.enforce_once()
+        # Retry browser clear once markers/pids settle (Edge reparent race).
+        if not killed_browsers:
+            time.sleep(0.35)
+            living_pids = self.exam_shell.living_pids()
+            if living_pids:
+                allowed |= living_pids
+                self.app_lock.set_allowed_pids(allowed)
+                killed_browsers = self.app_lock.force_clear_other_browsers()
         killed_all = list(killed) + list(killed_browsers)
         if student_message:
             with self._lock:
@@ -446,6 +460,7 @@ class SessionController:
             self.state.error = ""
 
         self.monitor.start(session["id"])
+        self.sync.start(session["id"])
         pairing = self.pairing.begin_session(
             session_id=session["id"],
             pairing_token=session["pairing_token"],
@@ -782,9 +797,15 @@ class SessionController:
         app_lock = self.app_lock.snapshot()
         focus = self.focus_guard.snapshot()
         storage = self._storage_hint()
+        try:
+            from intelliQuiz_desktop.build_info import BUILD_SHA, BUILD_TIME
+        except Exception:
+            BUILD_SHA, BUILD_TIME = "dev", "local"
         with self._lock:
             st = self.state
             return {
+                "build_sha": BUILD_SHA,
+                "build_time": BUILD_TIME,
                 "phase": st.phase,
                 "email": st.email,
                 "full_name": st.full_name,
@@ -853,6 +874,15 @@ class SessionController:
         self.exam_shell.close()
         self.monitor.stop()
         self.pairing.stop()
+        try:
+            with self._lock:
+                sid = self.state.session_id
+            if sid:
+                self.sync.request_flush(sid)
+            self.sync.stop(wait=False)
+        except Exception:
+            pass
+        shutdown_workers(wait=False)
         if not keep_store:
             self.store.close()
             self.api.close()
@@ -930,16 +960,15 @@ class SessionController:
         }
         self.store.append(session_id=sid, type=typ, severity=severity, payload=enriched)
 
-        def _flush() -> dict[str, Any]:
-            try:
-                return self.sync.flush(sid)
-            except Exception as exc:
-                return {"accepted": 0, "duplicates": 0, "rejected": 0, "flushed": 0, "error": str(exc)}
-
         if not sync_now:
-            threading.Thread(target=_flush, name="iq-sync", daemon=True).start()
+            self.sync.request_flush(sid)
             return {"accepted": 0, "duplicates": 0, "rejected": 0, "flushed": 0, "deferred": True}
-        return _flush()
+        # Final/critical path — still off the UI thread via sync pool when possible.
+        fut = submit_sync(self.sync.flush, sid)
+        try:
+            return fut.result(timeout=20)
+        except Exception as exc:
+            return {"accepted": 0, "duplicates": 0, "rejected": 0, "flushed": 0, "error": str(exc)}
 
     def _on_integrity_event(self, typ: str, severity: float, payload: dict[str, Any]) -> None:
         enriched = dict(payload)
@@ -1094,7 +1123,7 @@ class SessionController:
     def _flush_pending_sync(self) -> None:
         try:
             for sid in self.store.pending_session_ids():
-                self.sync.flush(sid)
+                self.sync.request_flush(sid)
         except Exception:
             pass
 
@@ -1199,10 +1228,7 @@ class SessionController:
                         "pairing_frames": self.pairing.status().get("android_frames", 0),
                     },
                 )
-                try:
-                    self.sync.flush(sid)
-                except Exception:
-                    pass
+                self.sync.request_flush(sid)
 
         self._hb_thread = threading.Thread(target=loop, name="heartbeat", daemon=True)
         self._hb_thread.start()

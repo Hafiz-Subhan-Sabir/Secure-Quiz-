@@ -83,12 +83,15 @@ class DesktopSettings(BaseSettings):
     # while the exam UI runs in a browser (production would use kiosk WebView).
     app_lock_kill: bool = True
     app_lock_kill_browsers: bool = True
+    # When true, do not kill Cursor/VS Code during lockdown (lab/dev machines).
+    app_lock_protect_dev: bool = False
     exam_kiosk_mode: bool = True
     # Always require a paired phone camera during exams (even if PC has a webcam).
     require_android_camera_always: bool = True
     identity_match_threshold: float = 0.88
     focus_loss_pause_sec: float = 3.0
     camera_index: int = 0
+    build_sha: str = "dev"
 
 
 @lru_cache

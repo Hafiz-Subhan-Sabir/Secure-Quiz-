@@ -597,6 +597,14 @@
           return "";
         }
       };
+      window.__iqReportAppSwitch = function (plain) {
+        try {
+          reportAppSwitch(plain || "Student left the phone camera app.");
+          return "ok";
+        } catch {
+          return "";
+        }
+      };
 
       document.addEventListener("visibilitychange", () => {
         if (document.hidden && paired) {

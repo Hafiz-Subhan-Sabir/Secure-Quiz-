@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -12,13 +13,15 @@ import numpy as np
 from intelliQuiz_desktop.ai.engine import FrameAnalysis, OnDeviceAIEngine
 from intelliQuiz_desktop.ai.landmarks import FaceLandmarkerBundle
 from intelliQuiz_desktop.core.config import DesktopSettings, get_settings
-from intelliQuiz_desktop.runtime.evidence import EvidenceBundle, capture_evidence, evidence_payload
+from intelliQuiz_desktop.runtime.evidence import capture_evidence, evidence_payload
+from intelliQuiz_desktop.runtime.workers import submit_io
 
 
 @dataclass
 class MonitorSnapshot:
     running: bool = False
     camera_ok: bool = False
+    camera_phase: str = "idle"  # idle|opening|ready|busy|failed|stopped
     ai_ready: bool = False
     face_count: int = 0
     last_gesture: str = ""
@@ -28,17 +31,37 @@ class MonitorSnapshot:
     yaw: float = 0.0
     message: str = "Idle"
     evidence_count: int = 0
+    camera_index_used: int = -1
+    frame_generation: int = 0
+    last_frame_at: float = 0.0
     last_evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
 class FaceMonitor:
     """Owns the primary webcam during the exam.
 
-    Loop:
-      capture frame → MediaPipe Face Landmarker → 1404 features → RF model
-      → risk score. If risk ≥ threshold (or no/multi face / gaze away),
-      capture webcam JPEG + screen snapshot and emit an integrity event.
+    Design rules:
+    - Exactly one monitor generation runs at a time (generation token).
+    - Camera open is synchronous in the monitor thread (no overlapping openers).
+    - Face/identity state is cleared whenever the capture is lost or reopened.
+    - Camera preview can work even if face AI fails to load.
     """
+
+    # Prefer real RGB webcams; skip common virtual/IR names when ranking.
+    _VIRTUAL_HINTS = (
+        "obs",
+        "virtual",
+        "manycam",
+        "snap camera",
+        "nvidia broadcast",
+        "iriun",
+        "epoccam",
+        "droidcam",
+        "iphone",
+        "continuity",
+        "ndisource",
+    )
+    _IR_HINTS = ("infrared", " ir ", "ir camera", "tof", "depth")
 
     def __init__(
         self,
@@ -54,6 +77,7 @@ class FaceMonitor:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._generation = 0
         self._latest_jpeg: bytes | None = None
         self._latest_bgr: np.ndarray | None = None
         self._landmarker: FaceLandmarkerBundle | None = None
@@ -66,20 +90,43 @@ class FaceMonitor:
         self._terminate_threshold = 0.9
         self._last_terminate_at = 0.0
         self._latest_identity_features: np.ndarray | None = None
+        self._identity_generation = 0
 
     def apply_proctoring(self, *, warn: float, flag: float, terminate: float) -> None:
-        """Apply server proctoring profile thresholds."""
         self._warn_threshold = float(warn)
         self._terminate_threshold = float(terminate)
         self.settings.gesture_capture_threshold = float(flag)
 
+    def _clear_frame_state(self, *, message: str | None = None, phase: str | None = None) -> None:
+        with self._lock:
+            self.snapshot.camera_ok = False
+            self.snapshot.face_count = 0
+            self.snapshot.looking_away = False
+            self.snapshot.yaw = 0.0
+            self.snapshot.last_gesture = ""
+            self._latest_jpeg = None
+            self._latest_bgr = None
+            self._latest_identity_features = None
+            self._identity_generation = 0
+            self.snapshot.last_frame_at = 0.0
+            if message is not None:
+                self.snapshot.message = message
+            if phase is not None:
+                self.snapshot.camera_phase = phase
+
     def start(self, session_id: str) -> None:
         self._session_id = session_id
-        # Allow restart after a previous exam stop()
         if self._thread and self._thread.is_alive():
             return
-        self._thread = None
-        self._stop.clear()
+        # Ensure previous worker is fully stopped before clearing stop flag.
+        if self._thread is not None:
+            self._stop.set()
+            self._thread.join(timeout=8)
+            self._thread = None
+
+        self._generation += 1
+        gen = self._generation
+        self._stop = threading.Event()
         self._last_capture_at = 0.0
         self._last_soft_log_at = 0.0
         self._ema_risk = 0.0
@@ -87,6 +134,7 @@ class FaceMonitor:
         with self._lock:
             self.snapshot.running = True
             self.snapshot.camera_ok = False
+            self.snapshot.camera_phase = "opening"
             self.snapshot.face_count = 0
             self.snapshot.last_gesture = ""
             self.snapshot.last_risk = 0.0
@@ -95,45 +143,55 @@ class FaceMonitor:
             self.snapshot.message = "Starting webcam…"
             self.snapshot.evidence_count = 0
             self.snapshot.last_evidence = []
+            self.snapshot.camera_index_used = -1
+            self.snapshot.frame_generation = gen
+            self.snapshot.last_frame_at = 0.0
             self._latest_jpeg = None
             self._latest_bgr = None
-        self._thread = threading.Thread(target=self._loop, name="face-monitor", daemon=True)
+            self._latest_identity_features = None
+            self._identity_generation = 0
+        self._thread = threading.Thread(
+            target=self._loop,
+            name=f"face-monitor-{gen}",
+            args=(gen,),
+            daemon=True,
+        )
         self._thread.start()
 
     def restart(self, session_id: str | None = None) -> dict[str, Any]:
-        """Force-stop and reopen the webcam (Retry camera button)."""
         sid = session_id or self._session_id or "camera-reconnect"
         self.stop()
-        time.sleep(0.35)  # let Windows release the device node
+        time.sleep(0.45)
         self.start(sid)
         return {"ok": True, "message": "Reopening webcam…", "session_id": sid}
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-            self._thread = None
+        self._generation += 1  # invalidate any late opener / loop
+        thr = self._thread
+        if thr and thr.is_alive():
+            thr.join(timeout=8)
+        self._thread = None
         if self._landmarker:
             try:
                 self._landmarker.close()
             except Exception:
                 pass
             self._landmarker = None
+        self._clear_frame_state(message="Stopped", phase="stopped")
         with self._lock:
             self.snapshot.running = False
-            self.snapshot.camera_ok = False
-            self.snapshot.message = "Stopped"
-            self._latest_jpeg = None
-            self._latest_bgr = None
 
     def status(self, *, include_evidence: bool = True) -> dict[str, Any]:
         with self._lock:
             s = self.snapshot
+            fresh = bool(s.last_frame_at and (time.time() - s.last_frame_at) < 2.5)
             out = {
                 "running": s.running,
-                "camera_ok": s.camera_ok,
+                "camera_ok": bool(s.camera_ok and fresh),
+                "camera_phase": s.camera_phase,
                 "ai_ready": s.ai_ready,
-                "face_count": s.face_count,
+                "face_count": s.face_count if (s.camera_ok and fresh) else 0,
                 "last_gesture": s.last_gesture,
                 "last_risk": round(s.last_risk, 3),
                 "session_risk": round(s.session_risk, 3),
@@ -141,6 +199,9 @@ class FaceMonitor:
                 "yaw": round(s.yaw, 3),
                 "message": s.message,
                 "evidence_count": s.evidence_count,
+                "camera_index_used": s.camera_index_used,
+                "frame_generation": s.frame_generation,
+                "frame_fresh": fresh,
             }
             if include_evidence:
                 out["last_evidence"] = list(s.last_evidence[:6])
@@ -150,11 +211,18 @@ class FaceMonitor:
 
     def latest_jpeg(self) -> bytes | None:
         with self._lock:
+            if not self.snapshot.last_frame_at or (time.time() - self.snapshot.last_frame_at) > 3.0:
+                return None
             return self._latest_jpeg
 
     def identity_sample(self) -> np.ndarray | None:
         with self._lock:
             if self._latest_identity_features is None:
+                return None
+            # Reject stale embeddings from a previous camera generation.
+            if self._identity_generation != self.snapshot.frame_generation:
+                return None
+            if not self.snapshot.last_frame_at or (time.time() - self.snapshot.last_frame_at) > 2.5:
                 return None
             return self._latest_identity_features.copy()
 
@@ -170,9 +238,7 @@ class FaceMonitor:
         with self._lock:
             frame = None if self._latest_bgr is None else self._latest_bgr.copy()
         if frame is None:
-            # Lab / no-camera path: synthesize a labeled frame so evidence pipeline still works
             import cv2
-            import numpy as np
 
             frame = np.zeros((360, 480, 3), dtype=np.uint8)
             frame[:] = (28, 42, 36)
@@ -206,163 +272,254 @@ class FaceMonitor:
             self.snapshot.message = plain_language or self.snapshot.message
         return payload
 
-    def _frame_looks_valid(self, capture, *, strict: bool = True) -> bool:
+    def _score_candidate(self, frm: np.ndarray, idx: int, name: str) -> float:
+        mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
+        std = float(frm.std()) if hasattr(frm, "std") else 0.0
+        h, w = frm.shape[:2]
+        score = mean * 0.35 + std * 2.0 + min(w, 1280) * 0.01
+        low = (name or "").lower()
+        if any(hnt in low for hnt in self._VIRTUAL_HINTS):
+            score -= 80.0
+        if any(hnt in low for hnt in self._IR_HINTS):
+            score -= 60.0
+        if idx == int(self.settings.camera_index):
+            score += 12.0
+        # Prefer typical RGB resolutions over tiny IR sensors.
+        if w >= 640 and h >= 480:
+            score += 15.0
+        return score
+
+    def _device_name(self, idx: int) -> str:
+        # Best-effort; OpenCV does not always expose names on Windows.
         try:
-            ok_f, frm = capture.read()
-            if not ok_f or frm is None or getattr(frm, "size", 0) == 0:
-                return False
-            if not strict:
-                return True
-            mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
-            # Some laptop cams return very dark first frames; 0.5 is enough to
-            # reject empty buffers without rejecting a dim room.
-            return mean > 0.5
+            import cv2 as _cv2
+
+            cap = _cv2.VideoCapture(idx, getattr(_cv2, "CAP_DSHOW", 700))
+            if not cap.isOpened():
+                return ""
+            name = ""
+            try:
+                # CAP_PROP_BACKEND / custom — not portable; leave empty if unavailable.
+                name = str(cap.get(getattr(_cv2, "CAP_PROP_SETTINGS", 0)) or "")
+            except Exception:
+                name = ""
+            cap.release()
+            return name
         except Exception:
-            return False
+            return ""
 
-    def _try_open_camera(self) -> tuple[Any, int] | tuple[None, int]:
-        """Try camera indices/backends once. Never leave a handle open on failure.
+    def _open_one(self, idx: int, backend: int, gen: int) -> tuple[Any, int, float] | None:
+        """Open a single index/backend candidate. Caller owns release on discard."""
+        import cv2 as _cv2
 
-        Windows only allows one app to own the webcam. If Windows Camera / Zoom /
-        Teams is open, OpenCV will fail even though the hardware works.
+        if self._stop.is_set() or gen != self._generation:
+            return None
+        trial = None
+        try:
+            trial = _cv2.VideoCapture(idx, backend)
+            if not trial.isOpened():
+                trial.release()
+                return None
+            try:
+                trial.set(_cv2.CAP_PROP_FRAME_WIDTH, 640)
+                trial.set(_cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                trial.set(_cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            good_frame = None
+            for i in range(8):
+                if self._stop.is_set() or gen != self._generation:
+                    break
+                ok_f, frm = trial.read()
+                if not ok_f or frm is None or getattr(frm, "size", 0) == 0:
+                    time.sleep(0.04)
+                    continue
+                mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
+                if mean > 0.5 or i >= 5:
+                    good_frame = frm
+                    break
+                time.sleep(0.04)
+            if good_frame is None:
+                trial.release()
+                return None
+            score = self._score_candidate(good_frame, idx, self._device_name(idx))
+            return trial, idx, score
+        except Exception:
+            if trial is not None:
+                try:
+                    trial.release()
+                except Exception:
+                    pass
+            return None
+
+    def _try_open_camera(self, gen: int) -> tuple[Any, int] | tuple[None, int]:
+        """Open the best webcam.
+
+        Preferred index backends are probed in parallel (DSHOW/MSMF) on a small
+        pool; remaining indices are scanned only if needed.
         """
         import cv2 as _cv2
 
         preferred = int(self.settings.camera_index)
-        indices = [preferred] + [i for i in range(0, 5) if i != preferred]
-        # DirectShow first on Windows — MSMF often fails while Camera app works.
         backends = (
             getattr(_cv2, "CAP_DSHOW", 700),
             getattr(_cv2, "CAP_MSMF", 1400),
             0,
         )
-        for idx in indices:
-            if self._stop.is_set():
-                return None, preferred
-            for backend in backends:
-                if self._stop.is_set():
-                    return None, preferred
-                trial = None
-                try:
-                    trial = _cv2.VideoCapture(idx, backend)
-                    if not trial.isOpened():
-                        trial.release()
-                        continue
+
+        # Parallel probe preferred index backends — first strong score wins.
+        best: tuple[Any, int, float] | None = None
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="iq-cam") as pool:
+            futs = [pool.submit(self._open_one, preferred, backend, gen) for backend in backends[:2]]
+            try:
+                for fut in as_completed(futs, timeout=8):
+                    if self._stop.is_set() or gen != self._generation:
+                        break
                     try:
-                        trial.set(_cv2.CAP_PROP_FRAME_WIDTH, 640)
-                        trial.set(_cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                        trial.set(_cv2.CAP_PROP_BUFFERSIZE, 1)
+                        got = fut.result()
                     except Exception:
-                        pass
-                    warm_ok = False
-                    for i in range(20):
-                        # After several blank frames, accept any readable frame.
-                        if self._frame_looks_valid(trial, strict=(i < 12)):
-                            warm_ok = True
+                        continue
+                    if not got:
+                        continue
+                    trial, idx, score = got
+                    if best is None or score > best[2]:
+                        if best is not None:
+                            try:
+                                best[0].release()
+                            except Exception:
+                                pass
+                        best = (trial, idx, score)
+                        if score >= 40.0:
                             break
-                        time.sleep(0.08)
-                    if warm_ok:
-                        return trial, idx
-                    trial.release()
-                except Exception:
-                    if trial is not None:
+                    else:
                         try:
                             trial.release()
                         except Exception:
                             pass
-        return None, preferred
+            except TimeoutError:
+                pass
+            for fut in futs:
+                if not fut.done():
+                    fut.cancel()
 
-    def _loop(self) -> None:
+        if best is not None and best[2] >= 35.0:
+            return best[0], best[1]
+
+        # Fallback: sequential scan other indices (avoid hammering the driver).
+        for idx in [i for i in range(0, 4) if i != preferred]:
+            if self._stop.is_set() or gen != self._generation:
+                break
+            for backend in backends:
+                got = self._open_one(idx, backend, gen)
+                if not got:
+                    continue
+                trial, used, score = got
+                if best is None or score > best[2]:
+                    if best is not None:
+                        try:
+                            best[0].release()
+                        except Exception:
+                            pass
+                    best = (trial, used, score)
+                    if score >= 40.0:
+                        return trial, used
+                else:
+                    try:
+                        trial.release()
+                    except Exception:
+                        pass
+
+        if best is None:
+            return None, preferred
+        return best[0], best[1]
+
+    def _loop(self, gen: int) -> None:
         import cv2
 
+        ai_error = ""
         try:
             self._landmarker = FaceLandmarkerBundle(self.settings.face_landmarker_path)
         except Exception as exc:
+            ai_error = str(exc)
+            self._landmarker = None
             with self._lock:
-                self.snapshot.message = f"Face landmarker failed: {exc}"
-                self.snapshot.camera_ok = False
-            return
+                self.snapshot.ai_ready = False
+                self.snapshot.message = f"Face AI offline ({exc}); camera preview still attempted"
 
         interval = 1.0 / max(0.5, self.settings.monitor_fps)
-        # Keep retrying open — previous builds gave up forever after one failed attempt,
-        # which made laptops with a busy/locked webcam look "cameraless".
-        while not self._stop.is_set():
+        while not self._stop.is_set() and gen == self._generation:
+            self._clear_frame_state(message="Opening webcam…", phase="opening")
             with self._lock:
-                self.snapshot.camera_ok = False
-                self.snapshot.message = "Opening webcam…"
+                self.snapshot.frame_generation = gen
 
-            opened: list = []
-
-            def _open_with_timeout() -> None:
-                cap_try, idx_try = self._try_open_camera()
-                if cap_try is not None:
-                    opened.append((cap_try, idx_try))
-
-            opener = threading.Thread(target=_open_with_timeout, name="webcam-open", daemon=True)
-            opener.start()
-            opener.join(timeout=12.0)
-            if opener.is_alive():
-                # Timed out — do not use a late open; release if it appears shortly.
-                with self._lock:
-                    self.snapshot.message = "Webcam busy / slow — retrying…"
-                opener.join(timeout=2.0)
-                for late, _ in list(opened):
+            cap, used_index = self._try_open_camera(gen)
+            if self._stop.is_set() or gen != self._generation:
+                if cap is not None:
                     try:
-                        late.release()
+                        cap.release()
                     except Exception:
                         pass
-                opened.clear()
-                time.sleep(1.5)
-                continue
+                return
 
-            if not opened:
+            if cap is None:
                 with self._lock:
+                    self.snapshot.camera_phase = "busy"
                     self.snapshot.message = (
                         "Webcam locked — close Windows Camera, Zoom, Teams, or browser "
                         "tabs using the camera, then tap Retry webcam"
                     )
                     self.snapshot.camera_ok = False
-                # Wait and retry automatically (also serves the Retry button via restart()).
-                for _ in range(20):
-                    if self._stop.is_set():
+                for _ in range(16):
+                    if self._stop.is_set() or gen != self._generation:
                         return
                     time.sleep(0.25)
                 continue
 
-            cap, used_index = opened[0]
             with self._lock:
                 self.snapshot.camera_ok = True
-                self.snapshot.message = f"Monitoring (cam {used_index})"
+                self.snapshot.camera_phase = "ready"
+                self.snapshot.camera_index_used = used_index
+                self.snapshot.message = (
+                    f"Monitoring (cam {used_index})"
+                    + (f" · AI offline: {ai_error[:40]}" if ai_error else "")
+                )
 
             fail_reads = 0
             try:
-                while not self._stop.is_set():
+                while not self._stop.is_set() and gen == self._generation:
                     t0 = time.time()
                     ok, frame = cap.read()
                     if not ok or frame is None:
                         fail_reads += 1
                         if fail_reads >= 8:
-                            with self._lock:
-                                self.snapshot.camera_ok = False
-                                self.snapshot.message = "Webcam lost — reopening…"
-                            break  # release + reopen outer loop
+                            self._clear_frame_state(
+                                message="Webcam lost — reopening…",
+                                phase="opening",
+                            )
+                            break
                         time.sleep(0.2)
                         continue
 
                     fail_reads = 0
-                    with self._lock:
-                        self.snapshot.camera_ok = True
-
                     preview = frame
                     h, w = frame.shape[:2]
                     if w > 640:
                         scale = 640 / w
                         preview = cv2.resize(frame, (640, int(h * scale)))
                     ok_j, buf = cv2.imencode(".jpg", preview, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-                    if ok_j:
-                        with self._lock:
+                    now = time.time()
+                    with self._lock:
+                        self.snapshot.camera_ok = True
+                        self.snapshot.camera_phase = "ready"
+                        self.snapshot.last_frame_at = now
+                        self.snapshot.frame_generation = gen
+                        if ok_j:
                             self._latest_jpeg = buf.tobytes()
                             self._latest_bgr = frame
+
+                    if self._landmarker is None:
+                        time.sleep(max(0.0, interval - (time.time() - t0)))
+                        continue
 
                     try:
                         result = self._landmarker.detect_bgr(frame)
@@ -375,8 +532,13 @@ class FaceMonitor:
                                 feat = landmarks_to_features(faces[0])
                                 with self._lock:
                                     self._latest_identity_features = embedding_from_features(feat)
+                                    self._identity_generation = gen
                             except Exception:
                                 pass
+                        elif len(faces) != 1:
+                            with self._lock:
+                                self._latest_identity_features = None
+                                self._identity_generation = 0
                         analysis = self.engine.analyze_landmarks(faces)
                         self._handle_analysis(frame, analysis)
                     except Exception as exc:
@@ -390,22 +552,24 @@ class FaceMonitor:
                     cap.release()
                 except Exception:
                     pass
-                with self._lock:
-                    self.snapshot.camera_ok = False
-                    if not self._stop.is_set():
-                        self.snapshot.message = "Webcam stopped — reopening…"
-                    else:
-                        self.snapshot.message = "Webcam stopped"
+                self._clear_frame_state(
+                    message="Webcam stopped" if self._stop.is_set() else "Webcam stopped — reopening…",
+                    phase="stopped" if self._stop.is_set() else "opening",
+                )
 
-            if self._stop.is_set():
+            if self._stop.is_set() or gen != self._generation:
                 return
-            time.sleep(0.5)
+            time.sleep(0.4)
+
+        with self._lock:
+            self.snapshot.running = False
+            if self.snapshot.camera_phase not in {"failed", "busy"}:
+                self.snapshot.camera_phase = "stopped"
 
     def _handle_analysis(self, frame: np.ndarray, analysis: FrameAnalysis) -> None:
         pred = analysis.prediction
         risk = float(pred.risk) if pred else 0.0
 
-        # Sudden head movement (not sitting still facing the screen)
         if self._prev_yaw is not None and abs(analysis.yaw - self._prev_yaw) > 0.18:
             if pred is None or risk < 0.75:
                 from intelliQuiz_desktop.ai.engine import GesturePrediction
@@ -421,7 +585,6 @@ class FaceMonitor:
                 risk = pred.risk
                 analysis.looking_away = True
         self._prev_yaw = analysis.yaw
-
         self._ema_risk = (0.65 * self._ema_risk) + (0.35 * risk)
 
         now = time.time()
@@ -469,24 +632,36 @@ class FaceMonitor:
 
         if should_capture and cooled:
             self._last_capture_at = now
-            bundle = capture_evidence(
-                frame,
-                evidence_dir=self.settings.data_dir / "evidence",
-                session_id=self._session_id or "nosession",
-                reason=pred.name,
-                include_screen=True,
-            )
-            payload = evidence_payload(
-                bundle,
-                gesture_label=pred.name,
-                plain_language=pred.plain_language,
-            )
-            payload["yaw"] = analysis.yaw
-            payload["pitch"] = analysis.pitch
-            payload["source_detector"] = pred.source
-            self._record_evidence(payload, severity=risk, event_type=event_type)
+            # Offload disk/JPEG/screen capture so the webcam loop stays real-time.
+            frame_copy = frame.copy()
+            yaw = analysis.yaw
+            pitch = analysis.pitch
+            pred_name = pred.name
+            plain = pred.plain_language
+            src = pred.source
+            sid = self._session_id or "nosession"
+            evid_dir = self.settings.data_dir / "evidence"
+
+            def _capture_job() -> None:
+                bundle = capture_evidence(
+                    frame_copy,
+                    evidence_dir=evid_dir,
+                    session_id=sid,
+                    reason=pred_name,
+                    include_screen=True,
+                )
+                payload = evidence_payload(
+                    bundle,
+                    gesture_label=pred_name,
+                    plain_language=plain,
+                )
+                payload["yaw"] = yaw
+                payload["pitch"] = pitch
+                payload["source_detector"] = src
+                self._record_evidence(payload, severity=risk, event_type=event_type)
+
+            submit_io(_capture_job)
         elif self.on_event and risk >= self._warn_threshold and (now - self._last_soft_log_at) >= 20.0:
-            # Soft integrity log without heavy images (still visible in admin timeline)
             self._last_soft_log_at = now
             self.on_event(
                 event_type,

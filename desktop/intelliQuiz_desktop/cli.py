@@ -163,7 +163,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     url = f"http://{browse_host}:{settings.local_ui_port}/"
     phone_url = f"https://{lan}:{settings.local_phone_https_port}/phone"
 
+    try:
+        from intelliQuiz_desktop.build_info import BUILD_SHA, BUILD_TIME
+    except Exception:
+        BUILD_SHA, BUILD_TIME = "dev", "local"
     print("IntelliQuiz Desktop runtime")
+    print("  Build   ", f"{BUILD_SHA} @ {BUILD_TIME}")
     print("  UI      ", url)
     print("  Phone   ", phone_url, "(HTTPS - required for mobile camera)")
     print("  Pair WSS", f"wss://{lan}:{settings.local_phone_https_port}/ws/pair")

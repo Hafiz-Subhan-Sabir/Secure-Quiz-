@@ -71,6 +71,7 @@ class PairingHub:
         self._last_phone_frame_ts = ""
         self._last_desktop_frame_ts = ""
         self._latest_jpeg: bytes | None = None
+        self._client_count = 0
 
     def begin_session(
         self,
@@ -261,14 +262,22 @@ class PairingHub:
         except Exception:
             pass
 
+    def client_connected(self) -> None:
+        with self._lock:
+            self._client_count = max(0, int(getattr(self, "_client_count", 0))) + 1
+
     def client_disconnected(self) -> None:
-        """Phone WebSocket dropped — do not instantly unpair.
+        """Phone WebSocket dropped — only clear live when no clients remain.
 
         Mobile browsers / networks flap briefly. Keep `paired` until the alive
         timeout expires so confirm-camera / exam start still succeed, and so a
         quick reconnect does not wipe the handshake.
         """
         with self._lock:
+            self._client_count = max(0, int(getattr(self, "_client_count", 0)) - 1)
+            if self._client_count > 0:
+                self.state.last_android_message = "Secondary socket closed — primary still live"
+                return
             self.state.camera_live = False
             self.state.last_android_message = (
                 "Phone socket closed — reopen camera page if pairing expires"

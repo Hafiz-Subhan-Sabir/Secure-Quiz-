@@ -18,6 +18,7 @@ if not exist "_internal\" (
 
 echo Starting IntelliQuiz Desktop...
 echo Keep this window open while you take the exam.
+echo Close Windows Camera / Zoom / Teams before starting if webcam fails.
 echo.
 "IntelliQuizDesktop.exe"
 set EXITCODE=%ERRORLEVEL%

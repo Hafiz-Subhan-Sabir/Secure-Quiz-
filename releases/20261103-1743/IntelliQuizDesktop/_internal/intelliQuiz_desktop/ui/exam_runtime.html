@@ -1,0 +1,1928 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IntelliQuiz · Student exam</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #10241c;
+        --muted: #5a6f66;
+        --line: rgba(16, 36, 28, 0.12);
+        --accent: #0b6b58;
+        --accent-2: #1a9a7e;
+        --panel: rgba(251, 253, 252, 0.94);
+        --danger: #b42318;
+        --warn: #b86a1c;
+        --ok: #1f7a4d;
+        --font-brand: "Syne", sans-serif;
+        --font-sans: "Figtree", sans-serif;
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: var(--font-sans);
+        color: var(--ink);
+        background:
+          radial-gradient(1000px 560px at 8% 0%, rgba(26, 154, 126, 0.28), transparent 58%),
+          radial-gradient(800px 500px at 95% 100%, rgba(18, 70, 90, 0.14), transparent 52%),
+          linear-gradient(155deg, #d8e8e1 0%, #e4ebe7 45%, #d5e2dc 100%);
+      }
+      .shell {
+        width: 92vw;
+        height: 92vh;
+        max-width: 1280px;
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: 0 24px 60px rgba(16, 36, 28, 0.14);
+        overflow: hidden;
+        animation: shell-in 520ms var(--ease) both;
+      }
+      @keyframes shell-in {
+        from { opacity: 0; transform: translateY(14px) scale(0.985); }
+        to { opacity: 1; transform: none; }
+      }
+      @keyframes pulse-ready {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(26, 154, 126, 0.45); }
+        50% { box-shadow: 0 0 0 10px rgba(26, 154, 126, 0); }
+      }
+      @keyframes rise {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: none; }
+      }
+      .top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.9rem 1.35rem;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand {
+        font-family: var(--font-brand);
+        font-weight: 800;
+        font-size: 1.35rem;
+        color: var(--accent);
+        letter-spacing: -0.04em;
+        margin: 0;
+      }
+      .meta { color: var(--muted); font-size: 0.84rem; margin: 0.15rem 0 0; }
+      .badge-row { display: flex; flex-wrap: wrap; gap: 0.3rem; justify-content: end; }
+      .badge {
+        font-size: 0.68rem;
+        font-weight: 700;
+        padding: 0.25rem 0.5rem;
+        border-radius: 8px;
+        background: rgba(16, 36, 28, 0.06);
+        color: var(--muted);
+      }
+      .badge.on { background: rgba(31, 122, 77, 0.12); color: var(--ok); }
+      .badge.warn { background: rgba(184, 106, 28, 0.14); color: var(--warn); }
+      .badge.danger { background: rgba(180, 35, 24, 0.12); color: var(--danger); }
+      .rail {
+        display: flex;
+        padding: 0 1.35rem;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.5);
+      }
+      .rail-step {
+        flex: 1;
+        position: relative;
+        padding: 0.8rem 0.4rem;
+        text-align: center;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--muted);
+      }
+      .rail-step::after {
+        content: "";
+        position: absolute;
+        left: 12%;
+        right: 12%;
+        bottom: 0;
+        height: 3px;
+        border-radius: 3px 3px 0 0;
+        background: transparent;
+      }
+      .rail-step.active { color: var(--accent); }
+      .rail-step.active::after { background: var(--accent); }
+      .rail-step.done { color: var(--ok); }
+      .rail-step.done::after { background: rgba(31, 122, 77, 0.4); }
+      .stage { min-height: 0; overflow: auto; padding: 1.25rem 1.35rem 1rem; }
+      .hidden { display: none !important; }
+      h1 { font-family: var(--font-brand); letter-spacing: -0.03em; margin: 0 0 0.35rem; font-size: clamp(1.45rem, 2.2vw, 1.95rem); font-weight: 800; }
+      h2 { font-family: var(--font-brand); margin: 0 0 0.45rem; font-size: 1rem; }
+      .lead { color: var(--muted); line-height: 1.5; max-width: 46ch; margin: 0 0 1rem; }
+      .now-doing {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--accent);
+        background: rgba(11, 107, 88, 0.1);
+        padding: 0.3rem 0.65rem;
+        border-radius: 999px;
+        margin-bottom: 0.75rem;
+      }
+      .primary, .ghost, .danger-btn, .linkish {
+        border-radius: 12px;
+        padding: 0.75rem 1.1rem;
+        font-weight: 650;
+        cursor: pointer;
+        font: inherit;
+        transition: transform 160ms var(--ease), filter 160ms var(--ease), opacity 160ms;
+      }
+      .primary:hover:not(:disabled) { transform: translateY(-1px); }
+      .primary {
+        border: 0;
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        color: #f4fffb;
+      }
+      .primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+      .primary.ready { animation: pulse-ready 1.6s ease-out infinite; }
+      .ghost {
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--ink);
+      }
+      .danger-btn {
+        border: 0;
+        background: rgba(180, 35, 24, 0.1);
+        color: var(--danger);
+        font-size: 0.82rem;
+        padding: 0.55rem 0.75rem;
+      }
+      .linkish {
+        border: 0;
+        background: transparent;
+        color: var(--accent);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        padding: 0.35rem 0;
+        font-size: 0.9rem;
+      }
+      .footer-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        padding: 0.95rem 1.35rem;
+        border-top: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+      }
+      .footer-bar .hint {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.4;
+        max-width: 52ch;
+      }
+      .footer-bar .hint strong { color: var(--ink); }
+      .footer-bar .hint.ok-text strong { color: var(--ok); }
+      .footer-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+      .field { display: grid; gap: 0.3rem; margin-bottom: 0.8rem; }
+      .field label { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+      .field input, .field select {
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        padding: 0.72rem 0.85rem;
+        font: inherit;
+        background: #fff;
+        outline: none;
+      }
+      .field input:focus, .field select:focus {
+        border-color: rgba(11, 107, 88, 0.5);
+        box-shadow: 0 0 0 3px rgba(11, 107, 88, 0.12);
+      }
+      .login-wrap {
+        max-width: 420px;
+        margin: 2vh auto 0;
+        animation: rise 480ms var(--ease) both;
+      }
+      .login-brand-line {
+        font-family: var(--font-brand);
+        font-weight: 800;
+        font-size: 1.1rem;
+        color: var(--accent);
+        letter-spacing: -0.03em;
+        margin: 0 0 0.35rem;
+      }
+      .setup-main {
+        display: grid;
+        grid-template-columns: 1.4fr 0.6fr;
+        gap: 1.2rem;
+        align-items: start;
+      }
+      @media (max-width: 900px) {
+        .setup-main, .exam-layout { grid-template-columns: 1fr !important; }
+      }
+      .cam {
+        position: relative;
+        border-radius: 16px;
+        overflow: hidden;
+        background: #0c1a16;
+        aspect-ratio: 16/10;
+        display: grid;
+        place-items: center;
+        color: #9bb5ac;
+        font-size: 0.9rem;
+        border: 1px solid rgba(16, 36, 28, 0.18);
+      }
+      .cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .cam .placeholder {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        text-align: center;
+        line-height: 1.45;
+        background: #0c1a16;
+        color: #9bb5ac;
+      }
+      .cam .label {
+        position: absolute;
+        left: 0.7rem;
+        bottom: 0.65rem;
+        font-size: 0.7rem;
+        color: #d7ebe4;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 0.25rem 0.5rem;
+        border-radius: 7px;
+        z-index: 2;
+      }
+      .cam.flash { animation: flash 0.55s var(--ease); }
+      @keyframes flash {
+        0% { box-shadow: inset 0 0 0 0 rgba(255,255,255,0); }
+        35% { box-shadow: inset 0 0 0 8px rgba(255,255,255,0.5); }
+        100% { box-shadow: inset 0 0 0 0 rgba(255,255,255,0); }
+      }
+      .qr-box {
+        width: min(260px, 100%);
+        aspect-ratio: 1;
+        border-radius: 14px;
+        border: 1px dashed var(--line);
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background: #fff;
+        margin: 0.5rem 0 0.75rem;
+      }
+      .qr-box img { width: 100%; height: 100%; object-fit: contain; }
+      .side-panel {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 0.95rem 1rem;
+        background: rgba(255, 255, 255, 0.55);
+      }
+      .checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.55rem; }
+      .checklist li {
+        display: grid;
+        grid-template-columns: 1.4rem 1fr;
+        gap: 0.45rem;
+        align-items: start;
+        font-size: 0.9rem;
+        line-height: 1.35;
+      }
+      .checklist .mark {
+        width: 1.25rem;
+        height: 1.25rem;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 0.7rem;
+        font-weight: 800;
+        background: rgba(16, 36, 28, 0.08);
+        color: var(--muted);
+      }
+      .checklist li.done .mark { background: rgba(31, 122, 77, 0.18); color: var(--ok); }
+      .checklist li.current .mark { background: rgba(11, 107, 88, 0.18); color: var(--accent); }
+      .checklist li.wait .mark { background: rgba(184, 106, 28, 0.15); color: var(--warn); }
+      .ok { color: var(--ok); font-weight: 700; }
+      .ok-text { color: var(--ok); font-weight: 650; }
+      .mid { color: var(--warn); font-weight: 700; }
+      .bad { color: var(--danger); font-weight: 700; }
+      .note { color: var(--muted); font-size: 0.84rem; line-height: 1.45; }
+      .err { color: var(--danger); font-size: 0.9rem; margin: 0.55rem 0 0; }
+      .exam-layout {
+        display: grid;
+        grid-template-columns: 1.4fr 0.6fr;
+        gap: 1rem;
+        min-height: 100%;
+      }
+      .question-pane { display: flex; flex-direction: column; gap: 0.85rem; min-height: 48vh; }
+      .choices { display: grid; gap: 0.5rem; margin-top: 0.75rem; }
+      .choice {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 0.85rem 1rem;
+        cursor: pointer;
+        transition: border-color 160ms var(--ease), background 160ms var(--ease);
+      }
+      .choice:hover { border-color: rgba(11, 107, 88, 0.45); }
+      .choice.on { border-color: var(--accent); background: rgba(11, 107, 88, 0.08); }
+      .alert {
+        border-radius: 10px;
+        padding: 0.7rem 0.85rem;
+        background: rgba(180, 35, 24, 0.1);
+        color: var(--danger);
+        font-size: 0.88rem;
+      }
+      .warn-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 80;
+        display: grid;
+        place-items: center;
+        background: rgba(8, 18, 14, 0.78);
+        backdrop-filter: blur(8px);
+        padding: 1rem;
+      }
+      .warn-modal.hidden { display: none !important; }
+      .warn-card {
+        width: min(420px, 100%);
+        background: #fffdf9;
+        border-radius: 18px;
+        padding: 1.35rem 1.25rem 1.15rem;
+        border: 2px solid rgba(184, 106, 28, 0.45);
+        box-shadow: 0 22px 55px rgba(0,0,0,0.28);
+        text-align: center;
+        animation: rise 360ms var(--ease) both;
+      }
+      .warn-card.danger {
+        border-color: rgba(180, 35, 24, 0.55);
+        background: #fff8f7;
+      }
+      .warn-icon {
+        width: 3rem;
+        height: 3rem;
+        margin: 0 auto 0.65rem;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 1.45rem;
+        font-weight: 800;
+        background: rgba(184, 106, 28, 0.14);
+        color: var(--warn);
+      }
+      .warn-card.danger .warn-icon {
+        background: rgba(180, 35, 24, 0.14);
+        color: var(--danger);
+      }
+      .warn-card h2 {
+        margin: 0 0 0.4rem;
+        font-family: var(--font-brand);
+        font-size: 1.35rem;
+        letter-spacing: -0.03em;
+      }
+      .warn-card p {
+        margin: 0 0 1rem;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.4;
+      }
+      .pair-status {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+        margin: 0.75rem 0 0.35rem;
+      }
+      .pair-chip {
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0.35rem 0.65rem;
+        border-radius: 999px;
+        background: rgba(16, 36, 28, 0.06);
+        color: var(--muted);
+      }
+      .pair-chip.on { background: rgba(31, 122, 77, 0.15); color: var(--ok); }
+      .pair-chip.wait { background: rgba(184, 106, 28, 0.14); color: var(--warn); }
+      .pair-chip.bad { background: rgba(180, 35, 24, 0.12); color: var(--danger); }
+      .evidence {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 0.45rem;
+      }
+      .evidence figure { margin: 0; }
+      .evidence img {
+        width: 100%;
+        aspect-ratio: 4/3;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+      }
+      .evidence figcaption {
+        font-size: 0.64rem;
+        color: var(--muted);
+        margin-top: 0.15rem;
+        line-height: 1.25;
+      }
+      .done-pane {
+        max-width: 520px;
+        margin: 6vh auto 0;
+        text-align: center;
+        animation: rise 480ms var(--ease) both;
+      }
+      .result-card {
+        text-align: left;
+        margin: 1.25rem 0 0;
+        padding: 1rem 1.05rem;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(11, 107, 88, 0.06);
+      }
+      .result-card h2 {
+        margin: 0 0 0.65rem;
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+      .result-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem 0.85rem;
+        margin: 0;
+      }
+      .result-grid dt {
+        font-size: 0.72rem;
+        color: var(--muted);
+        margin: 0;
+      }
+      .result-grid dd {
+        margin: 0.1rem 0 0;
+        font-size: 1.05rem;
+        font-weight: 700;
+      }
+      .storage-note {
+        margin-top: 0.85rem;
+        font-size: 0.78rem;
+        color: var(--muted);
+        line-height: 1.45;
+        text-align: left;
+      }
+      .history-list {
+        margin: 0.75rem 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 0.45rem;
+        text-align: left;
+      }
+      .history-list li {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.55rem 0.7rem;
+        font-size: 0.82rem;
+        background: #fff;
+      }
+      .history-list strong { display: block; margin-bottom: 0.15rem; }
+      .done-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        justify-content: center;
+        margin-top: 1.25rem;
+      }
+      .done-actions .primary, .done-actions .ghost {
+        min-width: 9.5rem;
+      }
+      .check-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.45rem; }
+      .check-list li { display: flex; justify-content: space-between; gap: 0.6rem; font-size: 0.88rem; }
+      .url-box {
+        font-size: 0.75rem;
+        word-break: break-all;
+        background: rgba(11, 107, 88, 0.08);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.65rem 0.75rem;
+        color: var(--accent);
+        margin: 0.35rem 0 0.5rem;
+        max-width: 100%;
+      }
+      .pause-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: grid;
+        place-items: center;
+        background: rgba(10, 22, 18, 0.72);
+        backdrop-filter: blur(6px);
+        padding: 1.25rem;
+      }
+      .pause-card {
+        width: min(440px, 100%);
+        background: #fbfcfb;
+        border-radius: 18px;
+        padding: 1.35rem 1.25rem;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+        animation: rise 400ms var(--ease) both;
+      }
+      .pause-card h1 { font-size: 1.45rem; }
+      .pause-card .qr-box { margin: 0.75rem auto; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <div>
+          <p class="brand">IntelliQuiz</p>
+          <p class="meta" id="topMeta">Student exam · connecting…</p>
+        </div>
+        <div class="badge-row">
+          <span class="badge" id="bAi" title="Face AI">AI</span>
+          <span class="badge" id="bFace" title="PC camera">Face</span>
+          <span class="badge" id="bApps" title="App lock">Apps</span>
+          <span class="badge" id="bPhone" title="Phone room camera">Phone</span>
+          <span class="badge" id="bRisk" title="Integrity risk">Risk</span>
+        </div>
+      </header>
+
+      <nav class="rail" aria-label="Exam steps">
+        <div class="rail-step" data-step="login">1 · Sign in</div>
+        <div class="rail-step" data-step="setup">2 · Camera</div>
+        <div class="rail-step" data-step="exam">3 · Quiz</div>
+      </nav>
+
+      <div class="stage">
+        <!-- LOGIN: progressive disclosure -->
+        <section id="view-login">
+          <div class="login-wrap">
+            <p class="now-doing" id="loginChip">Step 1 of 3 — Sign in</p>
+            <p class="login-brand-line">IntelliQuiz</p>
+            <h1 id="loginTitle">Sign in to start</h1>
+            <p class="lead" id="loginLead">Enter your name, then sign in. Your name is what the admin will see on the report.</p>
+
+            <div id="loginCreds">
+              <div class="field">
+                <label for="displayName">Your name</label>
+                <input id="displayName" placeholder="Type your full name" autocomplete="name" />
+              </div>
+              <div class="field">
+                <label for="email">Email</label>
+                <input id="email" placeholder="student@example.com" autocomplete="username" />
+              </div>
+              <div class="field">
+                <label for="password">Password</label>
+                <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+              </div>
+            </div>
+
+            <div id="loginExam" class="hidden">
+              <div class="field">
+                <label for="examSelect">Which exam are you taking?</label>
+                <select id="examSelect"><option value="">Loading exams…</option></select>
+              </div>
+            </div>
+
+            <div id="loginEnroll" class="hidden">
+              <p class="lead" id="enrollLead">First time on this PC: enroll your face so we can verify it is really you before each exam.</p>
+              <p class="note" id="enrollNote">Look at the webcam in good lighting. We capture a few samples — nothing is uploaded until you start an exam.</p>
+              <div id="enrollPhonePanel" class="hidden" style="margin-top:1rem">
+                <p class="lead" style="margin:0 0 0.5rem">Scan with your phone to enroll</p>
+                <p class="note">Same Wi‑Fi as this PC. Point the phone at your face after pairing.</p>
+                <div class="qr-box"><img id="enrollQrImg" alt="Enrollment QR" /></div>
+                <div class="url-box" id="enrollQrUrl">Generating phone link…</div>
+                <button type="button" class="ghost" id="btnCopyEnrollUrl" style="margin:0.5rem 0">Copy phone link</button>
+                <p class="note" id="enrollPhoneStatus">Waiting for phone…</p>
+              </div>
+              <button type="button" class="linkish" id="btnEnrollPhone" style="margin-top:0.75rem">No webcam? Use phone to enroll →</button>
+              <button type="button" class="linkish" id="btnDeferPhone" style="display:block;margin-top:0.35rem">Skip for now — use phone at camera step →</button>
+            </div>
+
+            <p class="err hidden" id="loginErr"></p>
+          </div>
+        </section>
+
+        <!-- CAMERA SETUP -->
+        <section id="view-setup" class="hidden">
+          <p class="now-doing">Step 2 of 3 — Camera check</p>
+          <div class="setup-main">
+            <div>
+              <div id="panel-webcam">
+                <h1>Look at the camera</h1>
+                <p class="lead">Center your face on the PC webcam. <strong>You must also pair your phone</strong> — keep the IntelliQuiz camera app open during the exam.</p>
+                <div class="cam" id="faceCam">
+                  <div class="placeholder" id="camPlaceholder">Starting webcam…</div>
+                  <img id="faceImg" alt="Webcam preview" />
+                  <span class="label">PC webcam</span>
+                </div>
+                <button type="button" class="ghost" id="btnRetryWebcam" style="margin:0.5rem 0 0.25rem">Retry webcam</button>
+                <button type="button" class="linkish" id="btnSwitchPhone">Show phone QR (required) →</button>
+              </div>
+
+              <div id="panel-phone" class="hidden">
+                <h1>Pair your phone</h1>
+                <p class="lead">Same Wi‑Fi as this PC. Scan → Allow camera → Keep page open.</p>
+                <div class="pair-status" id="pairChips">
+                  <span class="pair-chip wait" id="chipScan">1 · Scan QR</span>
+                  <span class="pair-chip" id="chipCam">2 · Allow camera</span>
+                  <span class="pair-chip" id="chipLive">3 · Stay paired</span>
+                </div>
+                <div id="pairPending">
+                  <div class="qr-box"><img id="qrImg" alt="Phone camera QR" /></div>
+                  <div class="url-box" id="qrUrlBox">Generating phone link…</div>
+                  <button type="button" class="ghost" id="btnCopyUrl" style="margin-bottom:0.5rem">Copy phone link</button>
+                  <p class="note" id="qrEndpoint">Same router / Wi‑Fi. Guest networks often fail.</p>
+                </div>
+                <div id="pairSuccess" class="hidden" style="margin:0.75rem 0;padding:1rem;border-radius:12px;background:rgba(31,122,77,0.12);border:1px solid rgba(31,122,77,0.28)">
+                  <p style="margin:0;font-weight:700;color:var(--ok)">Phone paired ✓</p>
+                  <p class="note" id="pairSuccessHint" style="margin:0.4rem 0 0">Keep the IntelliQuiz camera page open on your phone.</p>
+                </div>
+                <button type="button" class="linkish" id="btnSwitchWebcam">← Back to PC webcam</button>
+                <p class="note" style="margin-top:0.75rem"><strong>Phone pairing is required</strong> for every exam. If this PC has a webcam, you must also pass the PC face check — phone alone is not enough.</p>
+              </div>
+              <p class="err hidden" id="setupErr"></p>
+            </div>
+            <aside>
+              <div class="side-panel">
+                <h2>Your progress</h2>
+                <ul class="checklist" id="setupChecklist">
+                  <li class="done" id="clSigned"><span class="mark">✓</span><span>Signed in</span></li>
+                  <li class="current" id="clCam"><span class="mark">2</span><span id="clCamText">Checking camera…</span></li>
+                  <li class="wait" id="clQuiz"><span class="mark">3</span><span>Start the quiz</span></li>
+                </ul>
+              </div>
+              <div class="side-panel" style="margin-top:0.75rem">
+                <h2>Live status</h2>
+                <ul class="check-list">
+                  <li><span>PC camera</span><span id="cCam">…</span></li>
+                  <li><span>Faces seen</span><span id="cFaces">…</span></li>
+                  <li><span>Phone</span><span id="cPaired">not paired</span></li>
+                </ul>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- QUIZ -->
+        <section id="view-exam" class="hidden">
+          <p class="now-doing">Step 3 of 3 — Answer &amp; submit</p>
+          <div class="exam-layout">
+            <div class="question-pane">
+              <div>
+                <p class="meta" id="qProgress">Question</p>
+                <h1 id="qText">Loading…</h1>
+                <div class="choices" id="qChoices"></div>
+                <div id="liveAlert" class="alert hidden" style="margin-top:0.85rem"></div>
+              </div>
+              <button class="danger-btn" type="button" id="btnSim" title="Lab only">Lab: force evidence photo</button>
+            </div>
+            <aside>
+              <div class="side-panel">
+                <h2>Monitoring</h2>
+                <ul class="check-list">
+                  <li><span>Time left</span><span id="timer">--:--</span></li>
+                  <li><span>Identity</span><span id="sIdent">…</span></li>
+                  <li><span>Risk</span><span id="sRisk">…</span></li>
+                  <li><span>Phone</span><span id="sPhone">…</span></li>
+                </ul>
+              </div>
+              <div class="side-panel" style="margin-top:0.75rem">
+                <h2 id="examCamTitle">Identity camera</h2>
+                <div class="cam" id="examCam" style="aspect-ratio:4/3">
+                  <div class="placeholder" id="examPlaceholder" style="font-size:0.8rem">No live frame</div>
+                  <img id="examImg" alt="Exam camera" />
+                  <span class="label" id="examCamLabel">Auto-capture on</span>
+                </div>
+              </div>
+              <div class="side-panel" style="margin-top:0.75rem">
+                <h2>Evidence photos</h2>
+                <div class="evidence" id="evidence"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="view-done" class="hidden">
+          <div class="done-pane">
+            <p class="now-doing">All done</p>
+            <h1>Exam submitted</h1>
+            <p class="lead" id="doneMsg" style="margin-left:auto;margin-right:auto">
+              Your answers were graded and sent for admin review.
+            </p>
+            <div class="result-card" id="resultCard">
+              <h2>Your results</h2>
+              <dl class="result-grid">
+                <div>
+                  <dt>Quiz score</dt>
+                  <dd id="resScore">—</dd>
+                </div>
+                <div>
+                  <dt>Percent</dt>
+                  <dd id="resPercent">—</dd>
+                </div>
+                <div>
+                  <dt>Integrity risk</dt>
+                  <dd id="resRisk">—</dd>
+                </div>
+                <div>
+                  <dt>Exam</dt>
+                  <dd id="resExam" style="font-size:0.9rem;font-weight:600">—</dd>
+                </div>
+              </dl>
+              <p class="storage-note" id="storageNote">
+                Official scores &amp; evidence are stored on the server. Admins review them under Attempts &amp; flags.
+                Taking another exam clears this PC’s local copy of the finished attempt.
+              </p>
+            </div>
+            <div id="historyWrap" class="hidden">
+              <div class="result-card">
+                <h2>Your previous attempts</h2>
+                <ul class="history-list" id="historyList"></ul>
+              </div>
+            </div>
+            <div class="done-actions">
+              <button class="primary" type="button" id="btnAnotherExam">Take another exam</button>
+              <button class="ghost" type="button" id="btnViewHistory">View all results</button>
+              <button class="ghost" type="button" id="btnSignOut">Sign out</button>
+            </div>
+            <p class="err hidden" id="doneErr"></p>
+          </div>
+        </section>
+      </div>
+
+      <!-- Sticky next-action bar -->
+      <footer class="footer-bar" id="footerBar">
+        <p class="hint" id="footerHint"><strong>Next:</strong> Type your name, email, and password, then sign in.</p>
+        <div class="footer-actions">
+          <button class="ghost hidden" type="button" id="btnFooterSecondary"></button>
+          <button class="primary" type="button" id="btnFooterPrimary">Sign in</button>
+        </div>
+      </footer>
+    </div>
+
+    <div class="pause-overlay hidden" id="pauseOverlay" role="alertdialog" aria-modal="true">
+      <div class="pause-card">
+        <p class="now-doing">Quiz paused</p>
+        <h1 id="pauseTitle">Fix this to continue</h1>
+        <p class="lead" id="pauseReason">Restore camera access to continue.</p>
+        <div id="pausePhoneBlock" class="hidden">
+          <p class="note"><strong>Scan again</strong> → Allow camera → Keep page open.</p>
+          <div class="qr-box"><img id="pauseQrImg" alt="Re-pair QR" /></div>
+          <div class="url-box" id="pauseQrUrl">…</div>
+        </div>
+        <div class="actions" style="margin-top:1rem">
+          <button class="primary" type="button" id="btnResume">Continue when ready</button>
+        </div>
+        <p class="err hidden" id="pauseErr"></p>
+      </div>
+    </div>
+
+    <div class="warn-modal hidden" id="warnModal" role="alertdialog" aria-modal="true">
+      <div class="warn-card" id="warnCard">
+        <div class="warn-icon" id="warnIcon">!</div>
+        <h2 id="warnTitle">Warning</h2>
+        <p id="warnBody">Something looked unusual.</p>
+        <button class="primary" type="button" id="warnOk" style="width:100%">OK — I understand</button>
+      </div>
+    </div>
+
+    <script>
+      const API = "";
+      let questions = [];
+      let qIndex = 0;
+      let selected = {};
+      let seconds = 0;
+      let pollTimer = null;
+      let camTimer = null;
+      let phase = "login";
+      let loginPhase = "creds"; // creds | enroll | exam
+      let setupMode = "webcam";
+      let enrollMode = "webcam"; // webcam | phone
+      let lastStatus = null;
+      let autoPhoneSwitched = false;
+      let autoPhoneAfterFace = false;
+      let advancing = false;
+      let camFailStreak = 0;
+      let quizPaused = false;
+      let lastWarnKey = "";
+      let warnDismissedKey = "";
+
+      const $ = (id) => document.getElementById(id);
+
+      async function api(path, opts = {}) {
+        const r = await fetch(API + path, {
+          headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+          ...opts,
+        });
+        const text = await r.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
+        if (!r.ok) {
+          let detail = data && data.detail;
+          if (Array.isArray(detail)) detail = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+          throw new Error(detail || data.message || r.statusText);
+        }
+        return data;
+      }
+
+      function resetToLogin(message) {
+        loginPhase = "creds";
+        enrollMode = "webcam";
+        $("loginCreds").classList.remove("hidden");
+        $("loginEnroll").classList.add("hidden");
+        $("loginExam").classList.add("hidden");
+        $("enrollPhonePanel").classList.add("hidden");
+        $("loginChip").textContent = "Step 1 of 3 — Sign in";
+        $("loginTitle").textContent = "Sign in to start";
+        $("loginLead").textContent = "Enter your name, then sign in. Your name is what the admin will see on the report.";
+        $("loginErr").textContent = message || "Session expired — sign in again.";
+        $("loginErr").classList.remove("hidden");
+        $("topMeta").textContent = "Ready · sign in below";
+        setStep("login");
+        syncFooter();
+      }
+
+      function sessionLost(st) {
+        return !st || !st.email;
+      }
+
+      function setStep(name) {
+        phase = name;
+        ["login", "setup", "exam", "done"].forEach((s) => {
+          const el = $("view-" + s);
+          if (el) el.classList.toggle("hidden", s !== name);
+        });
+        const order = ["login", "setup", "exam"];
+        document.querySelectorAll(".rail-step").forEach((el) => {
+          const s = el.dataset.step;
+          el.classList.remove("active", "done");
+          if (name === "done") el.classList.add("done");
+          else if (s === name) el.classList.add("active");
+          else if (order.indexOf(s) < order.indexOf(name)) el.classList.add("done");
+        });
+        $("footerBar").classList.toggle("hidden", name === "done");
+        syncFooter();
+      }
+
+      function fillResultCard(result, riskFallback) {
+        const score = result && result.quiz_score;
+        const max = result && result.quiz_max_score;
+        const pct = result && result.quiz_percent;
+        const risk = (result && result.last_risk_score != null)
+          ? result.last_risk_score
+          : riskFallback;
+        if (score != null && max != null) {
+          $("resScore").textContent = `${score} / ${max}`;
+        } else {
+          $("resScore").textContent = "Pending sync";
+        }
+        $("resPercent").textContent = pct != null ? `${pct}%` : "—";
+        $("resRisk").textContent = risk != null ? `${Math.round(Number(risk) * 100)}%` : "—";
+        $("resExam").textContent = (result && result.exam_title) || $("topMeta").textContent || "—";
+        if (result && result.error) {
+          $("storageNote").textContent =
+            "Score may still be syncing. Official results stay on the server for admin review.";
+        }
+      }
+
+      function resetClientExamState() {
+        questions = [];
+        qIndex = 0;
+        selected = {};
+        seconds = 0;
+        quizPaused = false;
+        autoPhoneSwitched = false;
+        camFailStreak = 0;
+        lastStatus = null;
+        $("historyWrap").classList.add("hidden");
+        $("doneErr").classList.add("hidden");
+        $("pauseOverlay").classList.add("hidden");
+      }
+
+      async function goPickAnotherExam() {
+        $("doneErr").classList.add("hidden");
+        try {
+          await api("/api/another-exam", { method: "POST" });
+          resetClientExamState();
+          loginPhase = "exam";
+          $("loginCreds").classList.add("hidden");
+          $("loginExam").classList.remove("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Pick exam";
+          $("loginTitle").textContent = "Choose your next exam";
+          $("loginLead").textContent =
+            "Previous attempt is saved on the server. Local copy on this PC was cleared. Pick any published exam.";
+          setStep("login");
+          await loadExams();
+          syncFooter();
+        } catch (e) {
+          $("doneErr").textContent = String(e.message || e);
+          $("doneErr").classList.remove("hidden");
+        }
+      }
+
+      async function showHistory() {
+        $("doneErr").classList.add("hidden");
+        try {
+          const rows = await api("/api/my-results");
+          const list = $("historyList");
+          list.innerHTML = "";
+          if (!rows.length) {
+            list.innerHTML = "<li>No attempts found yet.</li>";
+          } else {
+            rows.forEach((r) => {
+              const li = document.createElement("li");
+              const pct = r.quiz_percent != null ? `${r.quiz_percent}%` : "—";
+              const score =
+                r.quiz_score != null && r.quiz_max_score != null
+                  ? `${r.quiz_score}/${r.quiz_max_score}`
+                  : "—";
+              const risk = Math.round(Number(r.last_risk_score || 0) * 100);
+              li.innerHTML =
+                `<strong>${r.exam_title || "Exam"}</strong>` +
+                `${r.status} · score ${score} (${pct}) · risk ${risk}%`;
+              list.appendChild(li);
+            });
+          }
+          $("historyWrap").classList.remove("hidden");
+        } catch (e) {
+          $("doneErr").textContent = String(e.message || e);
+          $("doneErr").classList.remove("hidden");
+        }
+      }
+
+      async function signOut() {
+        $("doneErr").classList.add("hidden");
+        try {
+          await api("/api/logout", { method: "POST" });
+          resetClientExamState();
+          loginPhase = "creds";
+          $("loginCreds").classList.remove("hidden");
+          $("loginExam").classList.add("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Sign in";
+          $("loginTitle").textContent = "Sign in to start";
+          $("loginLead").textContent =
+            "Use your student account. Next you’ll pick an exam and check your camera.";
+          $("email").value = "";
+          $("password").value = "";
+          setStep("login");
+          syncFooter();
+        } catch (e) {
+          $("doneErr").textContent = String(e.message || e);
+          $("doneErr").classList.remove("hidden");
+        }
+      }
+
+      function setSetupMode(mode) {
+        setupMode = mode;
+        $("panel-webcam").classList.toggle("hidden", mode !== "webcam");
+        $("panel-phone").classList.toggle("hidden", mode !== "phone");
+        syncFooter();
+      }
+
+      function setBadge(id, text, cls) {
+        const el = $(id);
+        el.textContent = text;
+        el.className = "badge " + (cls || "");
+      }
+
+      function bindCamImg(imgId, placeholderId) {
+        const img = $(imgId);
+        const ph = $(placeholderId);
+        img.onload = () => {
+          ph.classList.add("hidden");
+          img.style.opacity = "1";
+        };
+        img.onerror = () => {
+          ph.classList.remove("hidden");
+          img.style.opacity = "0";
+        };
+        img.style.opacity = "0";
+      }
+
+      function startCamFeed() {
+        if (camTimer) return;
+        bindCamImg("faceImg", "camPlaceholder");
+        bindCamImg("examImg", "examPlaceholder");
+        const tick = () => {
+          // Never fall back to phone frames on the PC webcam panel (wrong-image bug).
+          if (phase === "setup" && setupMode === "webcam") {
+            $("faceImg").src = `/api/camera.jpg?source=webcam&t=${Date.now()}`;
+          }
+          if (phase === "exam") {
+            const ident = (lastStatus && lastStatus.identity_source) || "webcam";
+            const src = ident === "phone" ? "phone" : "webcam";
+            $("examImg").src = `/api/camera.jpg?source=${src}&t=${Date.now()}`;
+          }
+        };
+        tick();
+        camTimer = setInterval(tick, 500);
+      }
+
+      function gateReady(st) {
+        if (!st) return { ready: false, preferPhone: false };
+        const mon = st.monitor || {};
+        const pair = st.pairing || {};
+        const paired = !!(st.android_paired || pair.paired);
+        const hasWebcam = !!mon.camera_ok;
+        const faceOk = hasWebcam && mon.face_count === 1;
+        // PC webcam present → must use it (phone alone is not enough). Phone still required as secondary.
+        // No PC webcam → phone camera only is enough.
+        if (hasWebcam) {
+          return { ready: faceOk && paired, preferPhone: false, phoneMissing: faceOk && !paired };
+        }
+        return { ready: paired, preferPhone: true };
+      }
+
+      function syncFooter() {
+        const primary = $("btnFooterPrimary");
+        const secondary = $("btnFooterSecondary");
+        const hint = $("footerHint");
+        primary.classList.remove("ready");
+        secondary.classList.add("hidden");
+        hint.classList.remove("ok-text");
+
+        if (phase === "login") {
+          if (loginPhase === "creds") {
+            hint.innerHTML = "<strong>Next:</strong> Enter your email and password, then sign in.";
+            primary.textContent = "Sign in";
+            primary.disabled = false;
+          } else if (loginPhase === "enroll") {
+            if (enrollMode === "phone") {
+              const paired = lastStatus && lastStatus.pairing && lastStatus.pairing.paired;
+              if (paired) {
+                hint.classList.add("ok-text");
+                hint.innerHTML = "<strong>Phone paired.</strong> Look at your phone camera, then enroll.";
+                primary.textContent = "Enroll face from phone →";
+                primary.disabled = false;
+                primary.classList.add("ready");
+              } else {
+                hint.innerHTML = "<strong>Next:</strong> Scan the enrollment QR with your phone, then wait for paired.";
+                primary.textContent = "Waiting for phone…";
+                primary.disabled = true;
+              }
+            } else {
+              hint.innerHTML = "<strong>Next:</strong> Look at the webcam, or use your phone if you have no PC camera.";
+              primary.textContent = "Enroll my face →";
+              primary.disabled = false;
+            }
+            return;
+          } else {
+            hint.innerHTML = "<strong>Next:</strong> Choose your exam, then continue to the camera check.";
+            primary.textContent = "Continue to camera check →";
+            primary.disabled = !$("examSelect").value;
+          }
+          return;
+        }
+
+        if (phase === "setup") {
+          const g = gateReady(lastStatus);
+          if (setupMode === "webcam") {
+            if (g.ready) {
+              hint.classList.add("ok-text");
+              hint.innerHTML = "<strong>Ready!</strong> Face check + phone paired — continue to the quiz.";
+              primary.textContent = "Start quiz →";
+              primary.disabled = false;
+              primary.classList.add("ready");
+            } else {
+              const mon = (lastStatus && lastStatus.monitor) || {};
+              if (g.phoneMissing) {
+                hint.innerHTML = "<strong>Phone required.</strong> Scan the QR on your phone and keep IntelliQuiz open.";
+                primary.textContent = "Waiting for phone…";
+              } else if (mon.camera_ok) {
+                hint.innerHTML = "<strong>Next:</strong> Center one face, then pair your phone (required).";
+                primary.textContent = "Waiting for face + phone…";
+              } else {
+                hint.innerHTML = "<strong>No PC webcam found.</strong> Pair your phone camera to continue.";
+                primary.textContent = "Waiting for camera…";
+              }
+              primary.disabled = true;
+              secondary.classList.remove("hidden");
+              secondary.textContent = "Show phone QR (required)";
+            }
+          } else {
+            if (g.ready) {
+              hint.classList.add("ok-text");
+              hint.innerHTML = g.preferPhone
+                ? "<strong>Ready!</strong> Phone paired — continue to the quiz."
+                : "<strong>Ready!</strong> PC camera + phone paired — continue to the quiz.";
+              primary.textContent = "Start quiz →";
+              primary.disabled = false;
+              primary.classList.add("ready");
+            } else if (!g.preferPhone) {
+              const mon = (lastStatus && lastStatus.monitor) || {};
+              const pair = (lastStatus && lastStatus.pairing) || {};
+              const phonePaired = !!(lastStatus && (lastStatus.android_paired || pair.paired));
+              if (g.phoneMissing || !phonePaired) {
+                hint.innerHTML = "<strong>Phone required.</strong> Scan the QR and keep IntelliQuiz open.";
+                primary.textContent = "Waiting for phone…";
+              } else if (mon.camera_ok) {
+                hint.innerHTML = "<strong>PC webcam required.</strong> Go back, center one face, then start.";
+                primary.textContent = "Waiting for PC face…";
+              } else {
+                hint.innerHTML = "<strong>Next:</strong> Open your phone camera app → scan the QR → wait for “paired”.";
+                primary.textContent = "Waiting for phone…";
+              }
+              primary.disabled = true;
+            } else {
+              hint.innerHTML = "<strong>Next:</strong> Open your phone camera app → scan the QR → wait for “paired”.";
+              primary.textContent = "Waiting for phone…";
+              primary.disabled = true;
+            }
+          }
+          return;
+        }
+
+        if (phase === "exam") {
+          if (quizPaused) {
+            hint.innerHTML = "<strong>Paused:</strong> Restore camera access, then continue.";
+            primary.textContent = "Quiz paused";
+            primary.disabled = true;
+            secondary.classList.add("hidden");
+            return;
+          }
+          const item = questions[qIndex];
+          const answered = item && selected[item.id] !== undefined;
+          const last = qIndex >= questions.length - 1;
+          secondary.classList.remove("hidden");
+          secondary.textContent = "Previous";
+          secondary.disabled = qIndex === 0;
+          if (last) {
+            hint.innerHTML = answered
+              ? "<strong>Next:</strong> Submit your exam when you’re finished."
+              : "<strong>Next:</strong> Pick an answer, then submit.";
+            primary.textContent = "Submit exam";
+            primary.disabled = !answered;
+            if (answered) primary.classList.add("ready");
+          } else {
+            hint.innerHTML = answered
+              ? "<strong>Next:</strong> Go to the next question."
+              : "<strong>Next:</strong> Tap an answer choice, then continue.";
+            primary.textContent = "Next question →";
+            primary.disabled = !answered;
+            if (answered) primary.classList.add("ready");
+          }
+        }
+      }
+
+      function showPauseOverlay(st) {
+        const paused = !!(st && st.quiz_paused && phase === "exam");
+        quizPaused = paused;
+        $("pauseOverlay").classList.toggle("hidden", !paused);
+        if (!paused) return;
+        const reason = st.pause_reason || "Camera access is required to continue.";
+        const short = shortenAlert(reason);
+        $("pauseTitle").textContent = short.title;
+        $("pauseReason").textContent = short.body;
+        const pair = st.pairing || {};
+        const phone = st.identity_source === "phone" || setupMode === "phone"
+          || /phone/i.test(reason);
+        $("pausePhoneBlock").classList.toggle("hidden", !phone);
+        if (pair.qr_png_data_uri) {
+          $("pauseQrImg").src = pair.qr_png_data_uri;
+          $("qrImg").src = pair.qr_png_data_uri;
+        }
+        const url = pair.qr_text || pair.mobile_camera_url || "";
+        $("pauseQrUrl").textContent = url || "Waiting for phone link…";
+        syncFooter();
+      }
+
+      function shortenAlert(raw) {
+        const msg = String(raw || "").replace(/^⚠\s*WARNING:\s*/i, "").trim();
+        const m = msg.toLowerCase();
+        if (m.includes("exam started") || m.includes("keep this window")) {
+          return { title: "Exam rules", body: "Keep this window open. Don’t open Chrome, Edge, or other apps.", danger: false };
+        }
+        if (m.includes("prohibited") || m.includes("chrome") || m.includes("edge") || m.includes("helper")) {
+          return { title: "App not allowed", body: "Close other browsers/apps. Return to this exam window.", danger: true };
+        }
+        if (m.includes("focus") || m.includes("another app")) {
+          return { title: "Stay on the exam", body: "You switched away. Come back to continue.", danger: true };
+        }
+        if (m.includes("phone") && (m.includes("disconnect") || m.includes("lost") || m.includes("required"))) {
+          return { title: "Phone camera needed", body: "Scan the QR, allow camera, keep the page open.", danger: true };
+        }
+        if (m.includes("phone") && (m.includes("moved") || m.includes("switch"))) {
+          return { title: "Keep phone steady", body: "Don’t move the phone or leave the camera page.", danger: true };
+        }
+        if (m.includes("webcam") || m.includes("pc cam") || m.includes("camera was lost")) {
+          return { title: "PC camera needed", body: "Reconnect the webcam or allow camera access.", danger: true };
+        }
+        if (m.includes("looking") || m.includes("gaze") || m.includes("face")) {
+          return { title: "Face the camera", body: "Look at the webcam. A photo was saved for review.", danger: false };
+        }
+        if (m.includes("photo") || m.includes("evidence")) {
+          return { title: "Warning recorded", body: "A photo was saved for admin review. Keep following the rules.", danger: false };
+        }
+        const shortBody = msg.length > 110 ? msg.slice(0, 107) + "…" : (msg || "Something looked unusual.");
+        return { title: "Warning", body: shortBody, danger: /cheat|violat|prohibited|paused/i.test(msg) };
+      }
+
+      function showWarnPopup(title, body, danger) {
+        const key = title + "|" + body;
+        if (key === warnDismissedKey) return;
+        if (key === lastWarnKey && !$("warnModal").classList.contains("hidden")) return;
+        lastWarnKey = key;
+        $("warnTitle").textContent = title;
+        $("warnBody").textContent = body;
+        $("warnIcon").textContent = danger ? "!" : "!";
+        $("warnCard").classList.toggle("danger", !!danger);
+        $("warnModal").classList.remove("hidden");
+      }
+
+      function hideWarnPopup() {
+        warnDismissedKey = lastWarnKey;
+        $("warnModal").classList.add("hidden");
+      }
+
+      function updatePairChips(st) {
+        const pair = (st && st.pairing) || {};
+        const paired = !!(st && (st.android_paired || pair.paired));
+        const live = !!(pair.camera_live || (pair.android_frames || 0) > 0);
+        const scan = $("chipScan");
+        const cam = $("chipCam");
+        const liveEl = $("chipLive");
+        if (!scan) return;
+        scan.className = "pair-chip " + (paired || live ? "on" : "wait");
+        cam.className = "pair-chip " + (live ? "on" : paired ? "wait" : "");
+        liveEl.className = "pair-chip " + (paired && live ? "on" : paired ? "wait" : "");
+        scan.textContent = paired || live ? "1 · QR opened" : "1 · Scan QR";
+        cam.textContent = live ? "2 · Camera on" : "2 · Allow camera";
+        liveEl.textContent = paired && live ? "3 · Paired ✓" : "3 · Stay paired";
+
+        const pending = $("pairPending");
+        const success = $("pairSuccess");
+        const hint = $("pairSuccessHint");
+        if (pending && success) {
+          pending.classList.toggle("hidden", !!paired);
+          success.classList.toggle("hidden", !paired);
+          if (paired && hint) {
+            const mon = (st && st.monitor) || {};
+            if (mon.camera_ok && mon.face_count !== 1) {
+              hint.textContent = "Keep phone open. Next: center one face on the PC webcam, then Start quiz.";
+            } else if (mon.camera_ok) {
+              hint.textContent = "Keep phone open. Face check + phone are ready — tap Start quiz.";
+            } else {
+              hint.textContent = "Keep the IntelliQuiz camera page open — tap Start quiz when ready.";
+            }
+          }
+        }
+      }
+
+      function updateChecklist(st) {
+        const mon = (st && st.monitor) || {};
+        const pair = (st && st.pairing) || {};
+        const paired = !!(st && (st.android_paired || pair.paired));
+        const camOk = !!mon.camera_ok && mon.face_count === 1;
+        const clCam = $("clCam");
+        const clQuiz = $("clQuiz");
+        clCam.className = "";
+        clQuiz.className = "wait";
+        if (setupMode === "phone") {
+          if (mon.camera_ok) {
+            // Phone panel is for secondary pairing; PC webcam is still required.
+            if (camOk && paired) {
+              clCam.className = "done";
+              $("clCamText").textContent = "PC camera + phone ready";
+              clCam.querySelector(".mark").textContent = "✓";
+              clQuiz.className = "current";
+              clQuiz.querySelector(".mark").textContent = "→";
+            } else if (!paired) {
+              clCam.className = "current";
+              $("clCamText").textContent = "Scan QR — phone required with PC cam";
+              clCam.querySelector(".mark").textContent = "2";
+            } else {
+              clCam.className = "current";
+              $("clCamText").textContent = "Back to PC cam — show one face";
+              clCam.querySelector(".mark").textContent = "2";
+            }
+          } else if (paired) {
+            clCam.className = "done";
+            $("clCamText").textContent = "Phone camera paired";
+            clCam.querySelector(".mark").textContent = "✓";
+            clQuiz.className = "current";
+            clQuiz.querySelector(".mark").textContent = "→";
+          } else {
+            clCam.className = "current";
+            $("clCamText").textContent = "Scan the QR with your phone";
+            clCam.querySelector(".mark").textContent = "2";
+          }
+        } else if (camOk) {
+          clCam.className = "done";
+          $("clCamText").textContent = "Face check passed";
+          clCam.querySelector(".mark").textContent = "✓";
+          clQuiz.className = "current";
+          clQuiz.querySelector(".mark").textContent = "→";
+        } else if (mon.camera_ok) {
+          clCam.className = "current";
+          $("clCamText").textContent = "Show one face to the camera";
+          clCam.querySelector(".mark").textContent = "2";
+        } else {
+          clCam.className = "wait";
+          $("clCamText").textContent = "No webcam — use phone";
+          clCam.querySelector(".mark").textContent = "!";
+        }
+      }
+
+      function renderQuestion() {
+        if (!questions.length) return;
+        const item = questions[qIndex];
+        $("qProgress").textContent = `Question ${qIndex + 1} of ${questions.length}`;
+        $("qText").textContent = item.prompt;
+        const box = $("qChoices");
+        box.innerHTML = "";
+        (item.choices || []).forEach((c, i) => {
+          const div = document.createElement("div");
+          div.className = "choice" + (selected[item.id] === i ? " on" : "");
+          div.textContent = c;
+          div.onclick = async () => {
+            if (quizPaused) return;
+            selected[item.id] = i;
+            renderQuestion();
+            try {
+              await api("/api/answer", {
+                method: "POST",
+                body: JSON.stringify({ question_id: item.id, choice_index: i }),
+              });
+            } catch (e) { console.warn(e); }
+          };
+          box.appendChild(div);
+        });
+        syncFooter();
+      }
+
+      function renderEvidence(list) {
+        const root = $("evidence");
+        root.innerHTML = "";
+        (list || []).forEach((ev) => {
+          if (!ev.image_data_uri) return;
+          const fig = document.createElement("figure");
+          const img = document.createElement("img");
+          img.src = ev.image_data_uri;
+          const cap = document.createElement("figcaption");
+          cap.textContent = (ev.gesture_label || "event").slice(0, 40);
+          fig.appendChild(img);
+          fig.appendChild(cap);
+          root.appendChild(fig);
+          if (ev.screen_image_data_uri) {
+            const fig2 = document.createElement("figure");
+            const img2 = document.createElement("img");
+            img2.src = ev.screen_image_data_uri;
+            const cap2 = document.createElement("figcaption");
+            cap2.textContent = "Screen";
+            fig2.appendChild(img2);
+            fig2.appendChild(cap2);
+            root.appendChild(fig2);
+          }
+        });
+      }
+
+      function applyStatus(st) {
+        lastStatus = st;
+        const mon = st.monitor || {};
+        const apps = st.app_lock || {};
+        const pair = st.pairing || {};
+        const riskPct = Math.round((mon.session_risk || mon.last_risk || 0) * 100);
+        const paired = !!(st.android_paired || pair.paired);
+
+        setBadge("bAi", st.ai_ready ? "AI: ready" : "AI: offline", st.ai_ready ? "on" : "warn");
+        setBadge("bFace", mon.camera_ok ? `Face: ${mon.face_count}` : "Face: no cam", mon.camera_ok ? "on" : "warn");
+        const hitNames = (apps.hits || []).map((h) => h.name);
+        setBadge("bApps", apps.active ? (hitNames.length ? "Apps: alert" : "Apps: locked") : "Apps: idle", hitNames.length ? "danger" : apps.active ? "on" : "");
+        setBadge("bPhone", paired ? "Phone: paired" : "Phone: waiting", paired ? "on" : "warn");
+        setBadge("bRisk", `Risk: ${riskPct}%`, riskPct >= 65 ? "danger" : riskPct >= 40 ? "warn" : "on");
+
+        $("cCam").textContent = mon.camera_ok ? "OK" : "unavailable";
+        $("cCam").className = mon.camera_ok ? "ok" : "mid";
+        $("cFaces").textContent = String(mon.face_count ?? "—");
+        $("cFaces").className = mon.face_count === 1 ? "ok" : "mid";
+        $("cPaired").textContent = paired ? "paired" : "not paired";
+        $("cPaired").className = paired ? "ok" : "mid";
+
+        if (pair.qr_png_data_uri) $("qrImg").src = pair.qr_png_data_uri;
+        const phoneUrl = pair.qr_text || pair.mobile_camera_url || "";
+        if (phoneUrl) {
+          $("qrUrlBox").textContent = phoneUrl;
+          $("qrEndpoint").textContent = phoneUrl.startsWith("http")
+            ? "If scan shows “Text” instead of opening, copy the link above into your phone browser."
+            : "Warning: QR is not a web link — restart the desktop client.";
+        }
+
+        if (loginPhase === "enroll" && enrollMode === "phone") {
+          if (pair.qr_png_data_uri) $("enrollQrImg").src = pair.qr_png_data_uri;
+          if (phoneUrl) $("enrollQrUrl").textContent = phoneUrl;
+          const frames = pair.android_frames || 0;
+          $("enrollPhoneStatus").textContent = paired
+            ? (frames > 0
+              ? `Phone paired · ${frames} frames — look at your face, then enroll`
+              : "Phone paired — allow camera and center your face")
+            : "Waiting for phone… scan the QR above";
+          $("enrollPhoneStatus").className = paired ? "note ok-text" : "note";
+        }
+
+        $("sIdent").textContent = st.identity_source || "—";
+        $("sPhone").textContent = paired ? "paired" : "not paired";
+        $("sRisk").textContent = riskPct + "%";
+        $("sRisk").className = riskPct >= 65 ? "bad" : riskPct >= 40 ? "mid" : "ok";
+        const camTitle = $("examCamTitle");
+        const camLabel = $("examCamLabel");
+        if (camTitle) {
+          camTitle.textContent = st.identity_source === "phone" ? "Phone camera" : "PC webcam";
+        }
+        if (camLabel) {
+          camLabel.textContent = st.identity_source === "phone" ? "Phone · live" : "PC · auto-capture";
+        }
+
+        renderEvidence(mon.last_evidence || []);
+        updateChecklist(st);
+        updatePairChips(st);
+        showPauseOverlay(st);
+        syncFooter();
+
+        // No webcam → phone mode (after webcam open timeout). Webcam OK but unpaired → show QR.
+        // Wait long enough for Windows webcam open (~10s) before treating camera as missing.
+        if (phase === "setup") {
+          const pairedNow = !!(st.android_paired || pair.paired);
+          const faceOk = !!mon.camera_ok && mon.face_count === 1;
+
+          // After phone pairs: leave the QR step. If PC cam still needs a face, go there.
+          if (pairedNow && setupMode === "phone") {
+            if (mon.camera_ok && !faceOk) {
+              autoPhoneAfterFace = true;
+              autoPhoneSwitched = false;
+              setSetupMode("webcam");
+              const alertEl = $("setupErr");
+              if (alertEl) {
+                alertEl.textContent = "Phone paired ✓ — center one face on the PC camera, then Start quiz.";
+                alertEl.classList.remove("hidden");
+                alertEl.style.color = "var(--ok, #1f7a4d)";
+              }
+            }
+          }
+
+          const camPhase = mon.camera_phase || (mon.camera_ok ? "ready" : "opening");
+          if (setupMode === "webcam" && !mon.camera_ok) {
+            // Do not treat "opening" as missing webcam — wait for busy/failed/ready.
+            if (camPhase === "opening") {
+              camFailStreak = 0;
+            } else {
+              camFailStreak += 1;
+            }
+            if (!autoPhoneSwitched && camFailStreak >= 20 && (camPhase === "busy" || camPhase === "failed" || camPhase === "stopped")) {
+              autoPhoneSwitched = true;
+              setSetupMode("phone");
+              $("setupErr").classList.add("hidden");
+            }
+          } else if (mon.camera_ok) {
+            camFailStreak = 0;
+            // Webcam came back after a false “no camera” switch — return to PC camera check
+            // only when phone is not yet paired (otherwise stay on progress).
+            if (setupMode === "phone" && autoPhoneSwitched && !pairedNow) {
+              autoPhoneSwitched = false;
+              setSetupMode("webcam");
+            } else if (!pairedNow && setupMode === "webcam" && !autoPhoneAfterFace && faceOk) {
+              // Face already good — show phone QR once for secondary camera.
+              autoPhoneAfterFace = true;
+              setSetupMode("phone");
+            }
+          }
+        }
+
+        if (phase === "exam") {
+          const alertEl = $("liveAlert");
+          if (st.quiz_paused && st.pause_reason) {
+            const short = shortenAlert(st.pause_reason);
+            alertEl.textContent = "⏸ " + short.title + " — " + short.body;
+            alertEl.classList.remove("hidden");
+            alertEl.style.background = "rgba(180, 35, 24, 0.12)";
+            alertEl.style.color = "var(--danger)";
+            // Pause card is the main UX; don't stack a second popup
+            if (!$("warnModal").classList.contains("hidden")) hideWarnPopup();
+          } else if (st.student_alert) {
+            const short = shortenAlert(st.student_alert);
+            alertEl.textContent = "⚠ " + short.title + " — " + short.body;
+            alertEl.classList.remove("hidden");
+            alertEl.style.background = "rgba(184, 106, 28, 0.14)";
+            alertEl.style.color = "var(--warn)";
+            showWarnPopup(short.title, short.body, short.danger);
+          } else if (mon.looking_away || (mon.last_risk >= 0.4 && mon.message)) {
+            const short = shortenAlert(mon.message || "Face the camera");
+            alertEl.textContent = "⚠ " + short.title + " — " + short.body;
+            alertEl.classList.remove("hidden");
+            alertEl.style.background = "rgba(184, 106, 28, 0.14)";
+            alertEl.style.color = "var(--warn)";
+            showWarnPopup(short.title, short.body, false);
+            $("examCam").classList.remove("flash");
+            void $("examCam").offsetWidth;
+            $("examCam").classList.add("flash");
+          } else {
+            alertEl.classList.add("hidden");
+            lastWarnKey = "";
+            warnDismissedKey = "";
+          }
+        }
+        if (st.exam_title) $("topMeta").textContent = `${st.exam_title} · ${st.phase}`;
+      }
+
+      async function pollStatus() {
+        try {
+          const st = await api("/api/status");
+          applyStatus(st);
+          // Desktop restart clears login while the browser still shows enroll/exam UI
+          if (
+            sessionLost(st) &&
+            phase === "login" &&
+            (loginPhase === "enroll" || loginPhase === "exam")
+          ) {
+            resetToLogin("Desktop restarted — please sign in again, then continue.");
+          }
+        } catch {
+          $("topMeta").textContent = "Runtime offline — restart the desktop client";
+        }
+      }
+
+      function startPolling() {
+        if (pollTimer) return;
+        pollStatus();
+        pollTimer = setInterval(pollStatus, 1200);
+      }
+
+      async function loadExams() {
+        const exams = await api("/api/exams");
+        const sel = $("examSelect");
+        sel.innerHTML = "";
+        if (!exams.length) {
+          sel.innerHTML = '<option value="">No published exams</option>';
+          return;
+        }
+        exams.forEach((ex) => {
+          const opt = document.createElement("option");
+          opt.value = ex.id;
+          opt.textContent = `${ex.title} (${ex.duration_minutes}m)`;
+          sel.appendChild(opt);
+        });
+        syncFooter();
+      }
+
+      async function startQuizAfterConfirm(preferPhone) {
+        if (advancing) return;
+        advancing = true;
+        $("setupErr").classList.add("hidden");
+        $("btnFooterPrimary").disabled = true;
+        $("btnFooterPrimary").textContent = "Starting…";
+        try {
+          await api("/api/phase/confirm-camera", {
+            method: "POST",
+            body: JSON.stringify({ prefer_phone: !!preferPhone }),
+          });
+          await api("/api/phase/exam", { method: "POST" });
+          setStep("exam");
+          try { await document.documentElement.requestFullscreen(); } catch { /* optional */ }
+          qIndex = 0;
+          renderQuestion();
+          startCamFeed();
+          await pollStatus();
+        } catch (e) {
+          $("setupErr").textContent = String(e.message || e);
+          $("setupErr").classList.remove("hidden");
+          syncFooter();
+        } finally {
+          advancing = false;
+        }
+      }
+
+      async function doEnroll() {
+        $("loginErr").classList.add("hidden");
+        $("btnFooterPrimary").disabled = true;
+        $("btnFooterPrimary").textContent = enrollMode === "phone" ? "Enrolling from phone…" : "Enrolling face…";
+        try {
+          if (enrollMode !== "phone") {
+            // Don't hang waiting for a missing webcam — switch to phone QR instead
+            try {
+              const st = await api("/api/status");
+              if (!(st.monitor && st.monitor.camera_ok)) {
+                await startPhoneEnroll();
+                $("loginErr").textContent =
+                  "PC webcam not available (close Windows Camera / Zoom / Teams first, or use phone). Scan the QR, allow camera, look at your face, then tap Enroll.";
+                $("loginErr").classList.remove("hidden");
+                syncFooter();
+                return;
+              }
+            } catch { /* continue with normal enroll */ }
+          }
+          await api("/api/identity/enroll", {
+            method: "POST",
+            body: JSON.stringify({ source: enrollMode === "phone" ? "phone" : "auto" }),
+          });
+          loginPhase = "exam";
+          enrollMode = "webcam";
+          $("loginEnroll").classList.add("hidden");
+          $("loginExam").classList.remove("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Pick exam";
+          $("loginTitle").textContent = "Choose your exam";
+          $("loginLead").textContent = "Face enrolled. Next we’ll verify you match before the quiz starts.";
+          await loadExams();
+          syncFooter();
+        } catch (e) {
+          $("loginErr").textContent = String(e.message || e);
+          $("loginErr").classList.remove("hidden");
+          $("btnFooterPrimary").disabled = false;
+          syncFooter();
+        }
+      }
+
+      async function startPhoneEnroll() {
+        $("loginErr").classList.add("hidden");
+        try {
+          const st = await api("/api/status");
+          if (sessionLost(st)) {
+            resetToLogin("Please sign in first, then tap Use phone to enroll.");
+            return;
+          }
+          const res = await api("/api/identity/enroll/begin-phone", { method: "POST" });
+          enrollMode = "phone";
+          $("enrollLead").textContent = "No PC webcam needed — enroll with your phone camera.";
+          $("enrollNote").textContent = "Scan the QR, allow camera, look at your face on the phone, then tap Enroll.";
+          $("enrollPhonePanel").classList.remove("hidden");
+          $("btnEnrollPhone").textContent = "Refresh phone QR";
+          const pair = (res && res.pairing) || {};
+          if (pair.qr_png_data_uri) $("enrollQrImg").src = pair.qr_png_data_uri;
+          const url = pair.qr_text || pair.mobile_camera_url || "";
+          $("enrollQrUrl").textContent = url || "Generating…";
+          startPolling();
+          await pollStatus();
+          syncFooter();
+        } catch (e) {
+          const msg = String(e.message || e);
+          if (/sign in/i.test(msg)) resetToLogin(msg);
+          else {
+            $("loginErr").textContent = msg;
+            $("loginErr").classList.remove("hidden");
+          }
+        }
+      }
+
+      async function deferPhoneEnroll() {
+        $("loginErr").classList.add("hidden");
+        try {
+          const st = await api("/api/status");
+          if (sessionLost(st)) {
+            resetToLogin("Please sign in first, then you can skip to phone camera.");
+            return;
+          }
+          await api("/api/identity/enroll/defer-phone", { method: "POST" });
+          loginPhase = "exam";
+          $("loginEnroll").classList.add("hidden");
+          $("loginExam").classList.remove("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Pick exam";
+          $("loginTitle").textContent = "Choose your exam";
+          $("loginLead").textContent = "Phone will be your identity camera. Pick an exam, then scan the QR at the camera step.";
+          await loadExams();
+          syncFooter();
+        } catch (e) {
+          const msg = String(e.message || e);
+          if (/sign in/i.test(msg)) resetToLogin(msg);
+          else {
+            $("loginErr").textContent = msg;
+            $("loginErr").classList.remove("hidden");
+          }
+        }
+      }
+
+      async function doLogin() {
+        $("loginErr").classList.add("hidden");
+        const displayName = ($("displayName").value || "").trim();
+        if (!displayName) {
+          $("loginErr").textContent = "Please type your name first.";
+          $("loginErr").classList.remove("hidden");
+          return;
+        }
+        try {
+          await api("/api/login", {
+            method: "POST",
+            body: JSON.stringify({
+              email: $("email").value,
+              password: $("password").value,
+              display_name: displayName,
+            }),
+          });
+          $("topMeta").textContent = displayName + " · signed in";
+          const id = await api("/api/identity/status");
+          if (id.needs_enrollment) {
+            loginPhase = "enroll";
+            enrollMode = "webcam";
+            $("loginCreds").classList.add("hidden");
+            $("loginEnroll").classList.remove("hidden");
+            $("loginChip").textContent = "Step 1 — Enroll face";
+            $("loginTitle").textContent = "Enroll your face";
+            $("loginLead").textContent = "Required once per PC. This verifies your identity before exams.";
+            setStep("login");
+            startCamFeed();
+            startPolling();
+            // If no webcam, surface the phone path immediately
+            setTimeout(async () => {
+              try {
+                const st = await api("/api/status");
+                if (!(st.monitor && st.monitor.camera_ok)) {
+                  $("enrollLead").textContent = "No PC webcam detected — you can enroll with your phone.";
+                  $("enrollNote").textContent = "Tap “Use phone to enroll”, or skip and pair the phone at the camera step.";
+                }
+              } catch { /* ignore */ }
+              syncFooter();
+            }, 800);
+            syncFooter();
+            return;
+          }
+          await loadExams();
+          loginPhase = "exam";
+          $("loginCreds").classList.add("hidden");
+          $("loginExam").classList.remove("hidden");
+          $("loginChip").textContent = "Step 1 of 3 — Pick exam";
+          $("loginTitle").textContent = "Choose your exam";
+          $("loginLead").textContent = "Then we’ll check your camera before the quiz starts.";
+          $("topMeta").textContent = "Signed in · pick an exam";
+          startPolling();
+          syncFooter();
+        } catch (e) {
+          $("loginErr").textContent = String(e.message || e);
+          $("loginErr").classList.remove("hidden");
+        }
+      }
+
+      async function doStartExam() {
+        $("loginErr").classList.add("hidden");
+        const primary = $("btnFooterPrimary");
+        primary.disabled = true;
+        primary.textContent = "Closing other apps…";
+        try {
+          const examId = $("examSelect").value;
+          if (!examId) throw new Error("Select an exam first");
+          const res = await api("/api/start", {
+            method: "POST",
+            body: JSON.stringify({ exam_id: examId }),
+          });
+          questions = (res.paper && res.paper.questions) || [];
+          seconds = ((res.paper && res.paper.duration_minutes) || 60) * 60;
+          autoPhoneSwitched = false;
+          camFailStreak = 0;
+          setStep("setup");
+          setSetupMode("webcam");
+          startCamFeed();
+          startPolling();
+          await pollStatus();
+          const closed = (res.apps_closed || []).length;
+          if (closed) {
+            const alertEl = $("setupErr");
+            if (alertEl) {
+              alertEl.textContent =
+                "Other apps closed. Scan the phone QR next and keep the IntelliQuiz camera open.";
+              alertEl.classList.remove("hidden");
+              alertEl.style.color = "var(--ok, #1f7a4d)";
+            }
+          }
+        } catch (e) {
+          $("loginErr").textContent = String(e.message || e);
+          $("loginErr").classList.remove("hidden");
+          syncFooter();
+        }
+      }
+
+      $("btnFooterPrimary").onclick = async () => {
+        if (phase === "login") {
+          if (loginPhase === "creds") await doLogin();
+          else if (loginPhase === "enroll") await doEnroll();
+          else await doStartExam();
+          return;
+        }
+        if (phase === "setup") {
+          const g = gateReady(lastStatus);
+          if (!g.ready) return;
+          await startQuizAfterConfirm(g.preferPhone);
+          return;
+        }
+        if (phase === "exam") {
+          const last = qIndex >= questions.length - 1;
+          if (last) {
+            const res = await api("/api/submit", { method: "POST" });
+            const riskPct = Math.round((res.risk || 0) * 100);
+            fillResultCard(res.result || null, res.risk);
+            $("doneMsg").textContent = res.forced
+              ? `Submitted while camera was unavailable (logged for admin). Risk ${riskPct}%.`
+              : `All set. Your score is below. Admins can also review evidence under Attempts & flags.`;
+            $("historyWrap").classList.add("hidden");
+            setStep("done");
+          } else {
+            qIndex += 1;
+            renderQuestion();
+            $("liveAlert").classList.add("hidden");
+          }
+        }
+      };
+
+      $("btnFooterSecondary").onclick = async () => {
+        if (phase === "setup") {
+          setSetupMode("phone");
+          return;
+        }
+        if (phase === "exam" && qIndex > 0) {
+          qIndex -= 1;
+          renderQuestion();
+        }
+      };
+
+      $("btnSwitchPhone").onclick = () => setSetupMode("phone");
+      $("btnSwitchWebcam").onclick = () => {
+        autoPhoneSwitched = true; // don't auto-bounce back immediately
+        setSetupMode("webcam");
+      };
+      $("btnRetryWebcam").onclick = async () => {
+        const btn = $("btnRetryWebcam");
+        btn.disabled = true;
+        $("camPlaceholder").textContent = "Reopening webcam…";
+        $("camPlaceholder").classList.remove("hidden");
+        try {
+          await api("/api/camera/reconnect", { method: "POST" });
+        } catch (e) {
+          $("setupErr").textContent = String(e.message || e);
+          $("setupErr").classList.remove("hidden");
+        } finally {
+          setTimeout(() => { btn.disabled = false; }, 2500);
+        }
+      };
+      $("btnEnrollPhone").onclick = () => startPhoneEnroll();
+      $("btnDeferPhone").onclick = () => deferPhoneEnroll();
+      $("btnCopyEnrollUrl").onclick = async () => {
+        const t = $("enrollQrUrl").textContent || "";
+        if (!t.startsWith("http")) return;
+        try {
+          await navigator.clipboard.writeText(t);
+          $("enrollPhoneStatus").textContent = "Link copied — paste into phone browser";
+        } catch {
+          $("enrollPhoneStatus").textContent = t;
+        }
+      };
+      $("examSelect").onchange = () => syncFooter();
+      $("password").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && loginPhase === "creds") doLogin();
+      });
+
+      $("btnCopyUrl").onclick = async () => {
+        const url = ($("qrUrlBox").textContent || "").trim();
+        if (!url.startsWith("http")) return;
+        try {
+          await navigator.clipboard.writeText(url);
+          $("qrEndpoint").textContent = "Link copied — paste it in your phone browser.";
+        } catch {
+          $("qrEndpoint").textContent = "Copy failed — select the link above manually.";
+        }
+      };
+
+      $("btnResume").onclick = async () => {
+        $("pauseErr").classList.add("hidden");
+        hideWarnPopup();
+        try {
+          await api("/api/phase/resume", { method: "POST" });
+          await pollStatus();
+          if (quizPaused) throw new Error("Camera still missing — allow it on phone/PC first");
+        } catch (e) {
+          $("pauseErr").textContent = String(e.message || e);
+          $("pauseErr").classList.remove("hidden");
+        }
+      };
+
+      $("warnOk").onclick = () => hideWarnPopup();
+
+      $("btnSim").onclick = async () => {
+        await api("/api/simulate-abnormal", { method: "POST" });
+        $("liveAlert").textContent = "Evidence photo captured for admin review.";
+        $("liveAlert").classList.remove("hidden");
+        await pollStatus();
+      };
+
+      $("btnAnotherExam").onclick = () => goPickAnotherExam();
+      $("btnViewHistory").onclick = () => showHistory();
+      $("btnSignOut").onclick = () => signOut();
+
+      setInterval(() => {
+        if (phase !== "exam" || quizPaused) return;
+        seconds = Math.max(0, seconds - 1);
+        const m = String(Math.floor(seconds / 60)).padStart(2, "0");
+        const s = String(seconds % 60).padStart(2, "0");
+        $("timer").textContent = `${m}:${s}`;
+      }, 1000);
+
+      api("/api/health").then((h) => {
+        $("topMeta").textContent = h.ai_ready ? "Ready · sign in below" : "Ready · AI model missing (exam still works)";
+        setBadge("bAi", h.ai_ready ? "AI: ready" : "AI: offline", h.ai_ready ? "on" : "warn");
+      }).catch(() => {
+        $("topMeta").textContent = "Cannot reach desktop runtime — restart the client";
+      });
+      setStep("login");
+      syncFooter();
+    </script>
+  </body>
+</html>

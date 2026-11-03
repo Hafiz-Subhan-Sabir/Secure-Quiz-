@@ -1464,9 +1464,15 @@
             }
           }
 
+          const camPhase = mon.camera_phase || (mon.camera_ok ? "ready" : "opening");
           if (setupMode === "webcam" && !mon.camera_ok) {
-            camFailStreak += 1;
-            if (!autoPhoneSwitched && camFailStreak >= 12) {
+            // Do not treat "opening" as missing webcam — wait for busy/failed/ready.
+            if (camPhase === "opening") {
+              camFailStreak = 0;
+            } else {
+              camFailStreak += 1;
+            }
+            if (!autoPhoneSwitched && camFailStreak >= 20 && (camPhase === "busy" || camPhase === "failed" || camPhase === "stopped")) {
               autoPhoneSwitched = true;
               setSetupMode("phone");
               $("setupErr").classList.add("hidden");

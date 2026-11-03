@@ -236,6 +236,7 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
     async def ws_pair(websocket: WebSocket) -> None:
         """Phone pairing over WSS (same HTTPS server phones use for camera)."""
         await websocket.accept()
+        ctrl.pairing.client_connected()
         try:
             while True:
                 message = await websocket.receive()

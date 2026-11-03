@@ -97,7 +97,8 @@ class MainActivity : AppCompatActivity() {
             showInstructions("Could not read that QR. Use the QR shown on the exam PC screen.")
             return@registerForActivityResult
         }
-        connectBridge(payload)
+        // WebView phone_camera.html owns the single WSS + camera stream.
+        // Do not open a second native DesktopBridge socket (dual-WSS flapping).
         ensureCameraThenOpen(payload.toMobileCameraUrl())
     }
 
@@ -106,7 +107,6 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val url = resolvePhoneUrl(intent)
         if (url != null) {
-            PairingPayload.tryParseQrText(url)?.let { connectBridge(it) }
             ensureCameraThenOpen(url)
             return
         }
@@ -117,7 +117,6 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         resolvePhoneUrl(intent)?.let { url ->
-            PairingPayload.tryParseQrText(url)?.let { connectBridge(it) }
             ensureCameraThenOpen(url)
         }
     }
@@ -182,15 +181,14 @@ class MainActivity : AppCompatActivity() {
         lastAppSwitchReportAt = now
         val wv = webView
         if (wv != null) {
-            // Capture a still from the live WebView camera page before leaving.
+            // WebView owns the WSS — ask the page to report + capture (no native bridge).
             wv.evaluateJavascript(
-                "(function(){try{return (window.__iqCaptureAppSwitch&&window.__iqCaptureAppSwitch())||'';}catch(e){return '';}})();",
-            ) { raw ->
-                val imageUri = parseJsStringResult(raw)
-                sendAppSwitchPayload(imageUri)
+                "(function(){try{if(window.__iqReportAppSwitch){window.__iqReportAppSwitch('Student left the phone camera app.');return 'ok';}if(window.__iqCaptureAppSwitch){return window.__iqCaptureAppSwitch()||'';}return '';}catch(e){return '';}})();",
+            ) { _ ->
+                runOnUiThread {
+                    setStatus("⚠ Left camera app — photo logged. Return now.")
+                }
             }
-        } else {
-            sendAppSwitchPayload(null)
         }
     }
 
@@ -386,7 +384,10 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, loadedUrl: String?) {
-                setStatus("Camera page loaded — tap Allow if asked, wait for Paired")
+                // WebView owns WSS pairing; mark local monitor ready without a second socket.
+                envMonitor.markPaired()
+                startEnvWatch()
+                setStatus("Camera page loaded — tap Allow if asked, wait for Paired ✓")
             }
 
             override fun onReceivedError(

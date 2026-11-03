@@ -73,15 +73,34 @@ class ExamShell:
         return bool(self.living_pids())
 
     def close(self) -> None:
-        if self.process and self.process.poll() is None:
+        # Edge/Chrome often reparent — terminate every PID that still uses our profile.
+        pids = set(self.living_pids())
+        if self.process and self.process.poll() is None and self.pid:
+            pids.add(int(self.pid))
+        for pid in sorted(pids, reverse=True):
             try:
-                self.process.terminate()
-                self.process.wait(timeout=3)
+                if sys.platform == "win32":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                        if hasattr(subprocess, "CREATE_NO_WINDOW")
+                        else 0,
+                        check=False,
+                    )
+                else:
+                    try:
+                        os.kill(pid, 9)
+                    except Exception:
+                        pass
             except Exception:
-                try:
-                    self.process.kill()
-                except Exception:
-                    pass
+                continue
+        if self.process is not None:
+            try:
+                self.process.wait(timeout=2)
+            except Exception:
+                pass
         self.process = None
         self.pid = 0
         self.browser = ""

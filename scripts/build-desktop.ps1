@@ -7,6 +7,19 @@ $Build = Join-Path $Desktop "build"
 
 Set-Location $Desktop
 
+# Stamp Git SHA + build time into the package so we can prove which source was shipped.
+$Sha = "unknown"
+try { $Sha = (git -C $Root rev-parse --short HEAD).Trim() } catch { }
+$Stamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ssK"
+$BuildInfo = Join-Path $Desktop "intelliQuiz_desktop\build_info.py"
+@"
+"""Build provenance stamped at package time."""
+
+BUILD_SHA = "$Sha"
+BUILD_TIME = "$Stamp"
+"@ | Set-Content -Path $BuildInfo -Encoding UTF8
+Write-Host "Build stamp: $Sha @ $Stamp"
+
 Write-Host "Installing desktop package..."
 pip install -e . | Out-Null
 pip install pyinstaller | Out-Null
@@ -32,6 +45,7 @@ pyinstaller `
   --hidden-import sklearn `
   --hidden-import sklearn.ensemble `
   --hidden-import sklearn.ensemble._forest `
+  --hidden-import intelliQuiz_desktop.build_info `
   --collect-all mediapipe `
   --collect-all sklearn `
   --collect-all joblib `

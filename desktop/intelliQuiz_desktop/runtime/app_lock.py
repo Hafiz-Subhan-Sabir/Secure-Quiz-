@@ -93,6 +93,13 @@ PROTECTED_NAMES = {
     "cmd",
 }
 
+# Optional lab protect list (enabled via IQ_DESKTOP_APP_LOCK_PROTECT_DEV=true).
+DEV_PROTECT_NAMES = {
+    "cursor",
+    "code",
+    "devenv",
+}
+
 
 @dataclass
 class ProcessHit:
@@ -124,7 +131,7 @@ class AppLockController:
         *,
         kill: bool = True,
         kill_browsers: bool = False,
-        interval_sec: float = 2.0,
+        interval_sec: float = 1.5,
         on_violation: Callable[[list[ProcessHit], list[str]], None] | None = None,
     ) -> None:
         self.kill = kill
@@ -141,6 +148,12 @@ class AppLockController:
         self._allowed_pids: set[int] = set()
         self._allowed_roots: set[int] = set()
         self._protected_markers: set[str] = set()
+        self._protect_dev_tools: bool = False
+        self._last_kill_errors: list[str] = []
+
+    def set_protect_dev_tools(self, enabled: bool) -> None:
+        with self._lock:
+            self._protect_dev_tools = bool(enabled)
 
     def set_allowed_pids(self, pids: set[int]) -> None:
         with self._lock:
@@ -173,16 +186,25 @@ class AppLockController:
         with self._lock:
             self.kill_browsers = True
             self._want_kill_browsers = True
+            protect_dev = self._protect_dev_tools
         hits = self.scan_once()
         killed: list[str] = []
+        errors: list[str] = []
         protected = self._protected_pids()
         for hit in hits:
             if hit.category != "browser":
                 continue
             if hit.pid in protected or hit.name in PROTECTED_NAMES:
                 continue
-            if _terminate(hit.pid):
+            if protect_dev and hit.name in DEV_PROTECT_NAMES:
+                continue
+            ok, err = _terminate_with_reason(hit.pid)
+            if ok:
                 killed.append(f"{hit.name}:{hit.pid}")
+            elif err:
+                errors.append(f"{hit.name}:{hit.pid}:{err}")
+        with self._lock:
+            self._last_kill_errors = errors
         return killed
 
     def start(self) -> None:
@@ -207,9 +229,11 @@ class AppLockController:
                 "active": self.state.active,
                 "hits": [{"name": h.name, "pid": h.pid, "category": h.category} for h in self.state.hits],
                 "killed": list(self.state.killed),
+                "kill_errors": list(self._last_kill_errors),
                 "violations": self.state.violations,
                 "kill_enabled": self.kill,
                 "kill_browsers": self.kill_browsers,
+                "protect_dev_tools": self._protect_dev_tools,
             }
 
     def scan_once(self) -> list[ProcessHit]:
@@ -221,20 +245,29 @@ class AppLockController:
     def enforce_once(self) -> tuple[list[ProcessHit], list[str]]:
         hits = self.scan_once()
         killed: list[str] = []
+        errors: list[str] = []
         protected = self._protected_pids()
+        with self._lock:
+            protect_dev = self._protect_dev_tools
         if self.kill:
             for hit in hits:
                 if hit.pid in protected:
                     continue
                 if hit.name in PROTECTED_NAMES:
                     continue
+                if protect_dev and hit.name in DEV_PROTECT_NAMES:
+                    continue
                 if hit.category == "browser" and not self.kill_browsers:
                     continue
-                if _terminate(hit.pid):
+                ok, err = _terminate_with_reason(hit.pid)
+                if ok:
                     killed.append(f"{hit.name}:{hit.pid}")
+                elif err:
+                    errors.append(f"{hit.name}:{hit.pid}:{err}")
         with self._lock:
             self.state.hits = hits
             self.state.killed = killed
+            self._last_kill_errors = errors
             self.state.last_scan_at = time.time()
             if hits:
                 self.state.violations += 1
@@ -416,18 +449,32 @@ def _pids_matching_cmdline(markers: set[str]) -> set[int]:
 
 
 def _terminate(pid: int) -> bool:
+    ok, _ = _terminate_with_reason(pid)
+    return ok
+
+
+def _terminate_with_reason(pid: int) -> tuple[bool, str]:
     if pid <= 0:
-        return False
+        return False, "invalid_pid"
     try:
         if sys.platform == "win32":
-            subprocess.check_call(
-                ["taskkill", "/PID", str(pid), "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                check=False,
             )
-        else:
-            subprocess.check_call(["kill", "-9", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        return False
+            if completed.returncode == 0:
+                return True, ""
+            detail = (completed.stderr or completed.stdout or "").strip() or f"exit_{completed.returncode}"
+            low = detail.lower()
+            if "access is denied" in low or "not allowed" in low:
+                return False, "access_denied_needs_elevation"
+            if "not found" in low:
+                return True, ""  # already gone
+            return False, detail[:120]
+        subprocess.check_call(["kill", "-9", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)[:120]
