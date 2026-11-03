@@ -192,6 +192,14 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
     def simulate() -> dict[str, Any]:
         return ctrl.simulate_abnormal()
 
+    @app.post("/api/camera/reconnect")
+    def camera_reconnect() -> dict[str, Any]:
+        """Force-reopen PC webcam after it failed or was locked by another app."""
+        try:
+            return ctrl.reconnect_camera()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/camera.jpg")
     def camera_jpeg(source: str = "auto") -> Response:
         """Serve a live JPEG. source=webcam|phone|auto.

@@ -817,6 +817,12 @@ class SessionController:
             "has_screen": bool(payload.get("screen_image_data_uri")),
         }
 
+    def reconnect_camera(self) -> dict[str, Any]:
+        """UI Retry: force-release and reopen the PC webcam."""
+        with self._lock:
+            sid = self.state.session_id or "camera-reconnect"
+        return self.monitor.restart(sid)
+
     def shutdown_runtime(self, *, keep_store: bool = False) -> None:
         self._hb_stop.set()
         self.focus_guard.stop()

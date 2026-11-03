@@ -620,6 +620,7 @@
                   <img id="faceImg" alt="Webcam preview" />
                   <span class="label">PC webcam</span>
                 </div>
+                <button type="button" class="ghost" id="btnRetryWebcam" style="margin:0.5rem 0 0.25rem">Retry webcam</button>
                 <button type="button" class="linkish" id="btnSwitchPhone">Show phone QR (required) →</button>
               </div>
 
@@ -1830,6 +1831,20 @@
       $("btnSwitchWebcam").onclick = () => {
         autoPhoneSwitched = true; // don't auto-bounce back immediately
         setSetupMode("webcam");
+      };
+      $("btnRetryWebcam").onclick = async () => {
+        const btn = $("btnRetryWebcam");
+        btn.disabled = true;
+        $("camPlaceholder").textContent = "Reopening webcam…";
+        $("camPlaceholder").classList.remove("hidden");
+        try {
+          await api("/api/camera/reconnect", { method: "POST" });
+        } catch (e) {
+          $("setupErr").textContent = String(e.message || e);
+          $("setupErr").classList.remove("hidden");
+        } finally {
+          setTimeout(() => { btn.disabled = false; }, 2500);
+        }
       };
       $("btnEnrollPhone").onclick = () => startPhoneEnroll();
       $("btnDeferPhone").onclick = () => deferPhoneEnroll();

@@ -100,10 +100,18 @@ class FaceMonitor:
         self._thread = threading.Thread(target=self._loop, name="face-monitor", daemon=True)
         self._thread.start()
 
+    def restart(self, session_id: str | None = None) -> dict[str, Any]:
+        """Force-stop and reopen the webcam (Retry camera button)."""
+        sid = session_id or self._session_id or "camera-reconnect"
+        self.stop()
+        time.sleep(0.35)  # let Windows release the device node
+        self.start(sid)
+        return {"ok": True, "message": "Reopening webcam…", "session_id": sid}
+
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=3)
+            self._thread.join(timeout=5)
             self._thread = None
         if self._landmarker:
             try:
@@ -198,6 +206,62 @@ class FaceMonitor:
             self.snapshot.message = plain_language or self.snapshot.message
         return payload
 
+    def _frame_looks_valid(self, capture) -> bool:
+        try:
+            ok_f, frm = capture.read()
+            if not ok_f or frm is None or getattr(frm, "size", 0) == 0:
+                return False
+            mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
+            return mean > 2.0
+        except Exception:
+            return False
+
+    def _try_open_camera(self) -> tuple[Any, int] | tuple[None, int]:
+        """Try camera indices/backends once. Never leave a handle open on failure."""
+        import cv2 as _cv2
+
+        preferred = int(self.settings.camera_index)
+        indices = [preferred] + [i for i in range(0, 5) if i != preferred]
+        backends = (
+            getattr(_cv2, "CAP_DSHOW", 700),
+            getattr(_cv2, "CAP_MSMF", 1400),
+            0,
+        )
+        for idx in indices:
+            if self._stop.is_set():
+                return None, preferred
+            for backend in backends:
+                if self._stop.is_set():
+                    return None, preferred
+                trial = None
+                try:
+                    trial = _cv2.VideoCapture(idx, backend)
+                    if not trial.isOpened():
+                        trial.release()
+                        continue
+                    try:
+                        trial.set(_cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        trial.set(_cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        trial.set(_cv2.CAP_PROP_BUFFERSIZE, 1)
+                    except Exception:
+                        pass
+                    warm_ok = False
+                    for _ in range(6):
+                        if self._frame_looks_valid(trial):
+                            warm_ok = True
+                            break
+                        time.sleep(0.05)
+                    if warm_ok:
+                        return trial, idx
+                    trial.release()
+                except Exception:
+                    if trial is not None:
+                        try:
+                            trial.release()
+                        except Exception:
+                            pass
+        return None, preferred
+
     def _loop(self) -> None:
         import cv2
 
@@ -209,148 +273,120 @@ class FaceMonitor:
                 self.snapshot.camera_ok = False
             return
 
-        cap = None
-        # Open webcam with a hard timeout — Windows drivers can hang forever with no camera.
-        # Try configured index first, then nearby indices (XPS/USB cams are often not index 0).
-        opened: list = []
-        used_index = self.settings.camera_index
+        interval = 1.0 / max(0.5, self.settings.monitor_fps)
+        # Keep retrying open — previous builds gave up forever after one failed attempt,
+        # which made laptops with a busy/locked webcam look "cameraless".
+        while not self._stop.is_set():
+            with self._lock:
+                self.snapshot.camera_ok = False
+                self.snapshot.message = "Opening webcam…"
 
-        def _frame_looks_valid(capture) -> bool:
-            try:
-                ok_f, frm = capture.read()
-                if not ok_f or frm is None or getattr(frm, "size", 0) == 0:
-                    return False
-                # Reject all-black / near-empty frames from wrong device nodes.
-                mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
-                return mean > 2.0
-            except Exception:
-                return False
+            opened: list = []
 
-        def _open_cam() -> None:
-            import cv2 as _cv2
+            def _open_with_timeout() -> None:
+                cap_try, idx_try = self._try_open_camera()
+                if cap_try is not None:
+                    opened.append((cap_try, idx_try))
 
-            preferred = int(self.settings.camera_index)
-            indices = [preferred] + [i for i in range(0, 4) if i != preferred]
-            backends = (
-                getattr(_cv2, "CAP_DSHOW", 700),
-                getattr(_cv2, "CAP_MSMF", 700),
-                0,
-            )
-            for idx in indices:
-                if self._stop.is_set():
-                    return
-                for backend in backends:
+            opener = threading.Thread(target=_open_with_timeout, name="webcam-open", daemon=True)
+            opener.start()
+            opener.join(timeout=12.0)
+            if opener.is_alive():
+                # Timed out — do not use a late open; release if it appears shortly.
+                with self._lock:
+                    self.snapshot.message = "Webcam busy / slow — retrying…"
+                opener.join(timeout=2.0)
+                for late, _ in list(opened):
+                    try:
+                        late.release()
+                    except Exception:
+                        pass
+                opened.clear()
+                time.sleep(1.5)
+                continue
+
+            if not opened:
+                with self._lock:
+                    self.snapshot.message = "Webcam unavailable — close Zoom/Teams/browser tabs using the camera, then Retry"
+                    self.snapshot.camera_ok = False
+                # Wait and retry automatically (also serves the Retry button via restart()).
+                for _ in range(20):
                     if self._stop.is_set():
                         return
-                    trial = None
+                    time.sleep(0.25)
+                continue
+
+            cap, used_index = opened[0]
+            with self._lock:
+                self.snapshot.camera_ok = True
+                self.snapshot.message = f"Monitoring (cam {used_index})"
+
+            fail_reads = 0
+            try:
+                while not self._stop.is_set():
+                    t0 = time.time()
+                    ok, frame = cap.read()
+                    if not ok or frame is None:
+                        fail_reads += 1
+                        if fail_reads >= 8:
+                            with self._lock:
+                                self.snapshot.camera_ok = False
+                                self.snapshot.message = "Webcam lost — reopening…"
+                            break  # release + reopen outer loop
+                        time.sleep(0.2)
+                        continue
+
+                    fail_reads = 0
+                    with self._lock:
+                        self.snapshot.camera_ok = True
+
+                    preview = frame
+                    h, w = frame.shape[:2]
+                    if w > 640:
+                        scale = 640 / w
+                        preview = cv2.resize(frame, (640, int(h * scale)))
+                    ok_j, buf = cv2.imencode(".jpg", preview, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    if ok_j:
+                        with self._lock:
+                            self._latest_jpeg = buf.tobytes()
+                            self._latest_bgr = frame
+
                     try:
-                        trial = _cv2.VideoCapture(idx, backend)
-                        if not trial.isOpened():
-                            trial.release()
-                            continue
-                        try:
-                            trial.set(_cv2.CAP_PROP_FRAME_WIDTH, 640)
-                            trial.set(_cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                            trial.set(_cv2.CAP_PROP_BUFFERSIZE, 1)
-                        except Exception:
-                            pass
-                        # Warm up a couple reads — first frame is often blank on Windows.
-                        warm_ok = False
-                        for _ in range(4):
-                            if _frame_looks_valid(trial):
-                                warm_ok = True
-                                break
-                            time.sleep(0.05)
-                        if warm_ok:
-                            opened.append((trial, idx))
-                            return
-                        trial.release()
-                    except Exception:
-                        if trial is not None:
+                        result = self._landmarker.detect_bgr(frame)
+                        faces = list(result.face_landmarks or [])
+                        if len(faces) == 1:
                             try:
-                                trial.release()
+                                from intelliQuiz_desktop.ai.landmarks import landmarks_to_features
+                                from intelliQuiz_desktop.security.identity import embedding_from_features
+
+                                feat = landmarks_to_features(faces[0])
+                                with self._lock:
+                                    self._latest_identity_features = embedding_from_features(feat)
                             except Exception:
                                 pass
+                        analysis = self.engine.analyze_landmarks(faces)
+                        self._handle_analysis(frame, analysis)
+                    except Exception as exc:
+                        with self._lock:
+                            self.snapshot.message = f"Analyze error: {exc}"
 
-        opener = threading.Thread(target=_open_cam, name="webcam-open", daemon=True)
-        opener.start()
-        opener.join(timeout=10.0)
-        if opened:
-            cap, used_index = opened[0]
-            # Release any extra trials that raced in (should not happen, but be safe).
-            for extra, _idx in opened[1:]:
+                    elapsed = time.time() - t0
+                    time.sleep(max(0.0, interval - elapsed))
+            finally:
                 try:
-                    extra.release()
+                    cap.release()
                 except Exception:
                     pass
-        if cap is None or not cap.isOpened():
-            with self._lock:
-                self.snapshot.message = "Webcam unavailable"
-                self.snapshot.camera_ok = False
-                self.snapshot.running = True
-            return
-
-        with self._lock:
-            self.snapshot.camera_ok = True
-            self.snapshot.message = f"Monitoring (cam {used_index})"
-
-        interval = 1.0 / max(0.5, self.settings.monitor_fps)
-        fail_reads = 0
-        try:
-            while not self._stop.is_set():
-                t0 = time.time()
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    fail_reads += 1
-                    if fail_reads >= 8:
-                        with self._lock:
-                            self.snapshot.camera_ok = False
-                            self.snapshot.message = "Webcam lost — reconnect camera"
-                    time.sleep(0.2)
-                    continue
-
-                fail_reads = 0
                 with self._lock:
-                    self.snapshot.camera_ok = True
+                    self.snapshot.camera_ok = False
+                    if not self._stop.is_set():
+                        self.snapshot.message = "Webcam stopped — reopening…"
+                    else:
+                        self.snapshot.message = "Webcam stopped"
 
-                # Preview jpeg (downscale for UI bandwidth)
-                preview = frame
-                h, w = frame.shape[:2]
-                if w > 640:
-                    scale = 640 / w
-                    preview = cv2.resize(frame, (640, int(h * scale)))
-                ok_j, buf = cv2.imencode(".jpg", preview, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-                if ok_j:
-                    with self._lock:
-                        self._latest_jpeg = buf.tobytes()
-                        self._latest_bgr = frame
-
-                try:
-                    result = self._landmarker.detect_bgr(frame)
-                    faces = list(result.face_landmarks or [])
-                    if len(faces) == 1:
-                        try:
-                            from intelliQuiz_desktop.ai.landmarks import landmarks_to_features
-                            from intelliQuiz_desktop.security.identity import embedding_from_features
-
-                            feat = landmarks_to_features(faces[0])
-                            with self._lock:
-                                self._latest_identity_features = embedding_from_features(feat)
-                        except Exception:
-                            pass
-                    analysis = self.engine.analyze_landmarks(faces)
-                    self._handle_analysis(frame, analysis)
-                except Exception as exc:
-                    with self._lock:
-                        self.snapshot.message = f"Analyze error: {exc}"
-
-                elapsed = time.time() - t0
-                time.sleep(max(0.0, interval - elapsed))
-        finally:
-            cap.release()
-            with self._lock:
-                self.snapshot.camera_ok = False
-                self.snapshot.message = "Webcam stopped"
+            if self._stop.is_set():
+                return
+            time.sleep(0.5)
 
     def _handle_analysis(self, frame: np.ndarray, analysis: FrameAnalysis) -> None:
         pred = analysis.prediction
