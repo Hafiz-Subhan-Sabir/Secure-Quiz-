@@ -93,9 +93,45 @@ CYBER_QUESTIONS = [
 
 
 def seed_if_empty() -> None:
+    import os
+
+    # Production / Railway: never inject demo passwords or sample attempts.
+    # Set IQ_SEED_DEMO=1 explicitly if you want demo accounts on a fresh empty DB.
+    on_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+    env = (os.environ.get("IQ_ENV") or os.environ.get("RAILWAY_ENVIRONMENT") or "").lower()
+    allow_demo = (os.environ.get("IQ_SEED_DEMO") or "").strip() in {"1", "true", "yes"}
+    production_like = on_railway or env in {"production", "prod", "staging"}
+
     db = SessionLocal()
     try:
         existing = db.scalar(select(User).limit(1))
+        if existing is None and production_like and not allow_demo:
+            # Bootstrap a single admin from env — never ship Admin123! to production.
+            admin_email = (os.environ.get("IQ_ADMIN_EMAIL") or "").strip().lower()
+            admin_password = os.environ.get("IQ_ADMIN_PASSWORD") or ""
+            if admin_email and len(admin_password) >= 8:
+                db.add(
+                    User(
+                        email=admin_email,
+                        full_name=(os.environ.get("IQ_ADMIN_NAME") or "System Admin").strip() or "System Admin",
+                        hashed_password=hash_password(admin_password),
+                        role="admin",
+                    )
+                )
+                db.add(
+                    ProctoringProfile(
+                        name="Default Medium",
+                        blacklist_apps="discord,teamviewer,anydesk,chrome,msedge",
+                        require_android_camera=True,
+                        strictness="medium",
+                        warn_threshold=0.4,
+                        flag_threshold=0.65,
+                        terminate_threshold=0.9,
+                    )
+                )
+                db.commit()
+            return
+
         if existing is None:
             admin = User(
                 email="admin@intelliquiz.dev",
@@ -136,9 +172,11 @@ def seed_if_empty() -> None:
             db.add(exam)
             db.commit()
 
-        _ensure_sample_questions(db)
-        _ensure_second_exam(db)
-        _ensure_demo_attempt(db)
+        # Demo quizzes / flagged sample attempts — local/dev only.
+        if allow_demo or not production_like:
+            _ensure_sample_questions(db)
+            _ensure_second_exam(db)
+            _ensure_demo_attempt(db)
     finally:
         db.close()
 

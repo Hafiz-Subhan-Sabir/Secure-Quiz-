@@ -249,14 +249,16 @@ class AppLockController:
         protected = self._protected_pids()
         with self._lock:
             protect_dev = self._protect_dev_tools
+        # Exam browser / runtime / protected PIDs are never violations.
+        actionable = [
+            h
+            for h in hits
+            if h.pid not in protected
+            and h.name not in PROTECTED_NAMES
+            and not (protect_dev and h.name in DEV_PROTECT_NAMES)
+        ]
         if self.kill:
-            for hit in hits:
-                if hit.pid in protected:
-                    continue
-                if hit.name in PROTECTED_NAMES:
-                    continue
-                if protect_dev and hit.name in DEV_PROTECT_NAMES:
-                    continue
+            for hit in actionable:
                 if hit.category == "browser" and not self.kill_browsers:
                     continue
                 ok, err = _terminate_with_reason(hit.pid)
@@ -265,15 +267,15 @@ class AppLockController:
                 elif err:
                     errors.append(f"{hit.name}:{hit.pid}:{err}")
         with self._lock:
-            self.state.hits = hits
+            self.state.hits = actionable
             self.state.killed = killed
             self._last_kill_errors = errors
             self.state.last_scan_at = time.time()
-            if hits:
+            if actionable:
                 self.state.violations += 1
-        if hits and self.on_violation:
-            self.on_violation(hits, killed)
-        return hits, killed
+        if actionable and self.on_violation:
+            self.on_violation(actionable, killed)
+        return actionable, killed
 
     def _protected_pids(self) -> set[int]:
         with self._lock:

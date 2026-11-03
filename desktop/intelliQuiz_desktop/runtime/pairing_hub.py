@@ -72,6 +72,8 @@ class PairingHub:
         self._last_desktop_frame_ts = ""
         self._latest_jpeg: bytes | None = None
         self._client_count = 0
+        # WebSocket object ids that completed a valid pair handshake.
+        self._authed_ws: set[int] = set()
 
     def begin_session(
         self,
@@ -134,6 +136,7 @@ class PairingHub:
             self._latest_jpeg = keep_jpeg
             if not keep_paired:
                 self._phone_frame_count = 0
+                self._authed_ws.clear()
         # Phone pairing uses FastAPI WSS on the HTTPS phone port (8767), not this legacy WS.
         # Keep PairingHub as state + message handler only.
         return self.status()
@@ -153,12 +156,27 @@ class PairingHub:
         if self.on_paired:
             self.on_paired()
 
-    def touch_alive(self) -> None:
+    def touch_alive(self, *, ws_id: int | None = None) -> None:
+        re_paired = False
         with self._lock:
+            if ws_id is not None and ws_id not in self._authed_ws:
+                return
             self.state.last_alive_at = time.time()
             self.state.camera_live = True
-            if self.state.paired:
+            # Re-arm pairing after soft expiry while the authenticated socket is still open.
+            if self.state.active and not self.state.paired and (
+                ws_id is None or ws_id in self._authed_ws
+            ):
+                self.state.paired = True
+                self.state.last_android_message = "Phone camera re-paired (alive)"
+                re_paired = True
+            elif self.state.paired:
                 self.state.last_android_message = "Phone camera alive"
+        if re_paired and self.on_paired:
+            try:
+                self.on_paired()
+            except Exception:
+                pass
 
     def mark_camera_lost(self, reason: str = "Phone camera closed") -> None:
         was_paired = False
@@ -266,7 +284,7 @@ class PairingHub:
         with self._lock:
             self._client_count = max(0, int(getattr(self, "_client_count", 0))) + 1
 
-    def client_disconnected(self) -> None:
+    def client_disconnected(self, *, ws_id: int | None = None) -> None:
         """Phone WebSocket dropped — only clear live when no clients remain.
 
         Mobile browsers / networks flap briefly. Keep `paired` until the alive
@@ -274,6 +292,8 @@ class PairingHub:
         quick reconnect does not wipe the handshake.
         """
         with self._lock:
+            if ws_id is not None:
+                self._authed_ws.discard(ws_id)
             self._client_count = max(0, int(getattr(self, "_client_count", 0)) - 1)
             if self._client_count > 0:
                 self.state.last_android_message = "Secondary socket closed — primary still live"
@@ -291,22 +311,39 @@ class PairingHub:
         else:
             await websocket.send(text)
 
+    def _ws_authed(self, websocket: Any) -> bool:
+        return id(websocket) in self._authed_ws
+
     async def _handle_message(self, websocket: Any, raw: Any) -> None:
+        ws_id = id(websocket)
         try:
             if isinstance(raw, bytes):
+                # Only accept frames from sockets that completed pair handshake.
+                if not self._ws_authed(websocket):
+                    return
+                re_paired = False
                 with self._lock:
                     self.state.android_frames += 1
                     self.state.last_alive_at = time.time()
                     self.state.camera_live = True
-                    self.state.last_android_message = "Phone camera frame received"
+                    if self.state.active and not self.state.paired:
+                        self.state.paired = True
+                        self.state.last_android_message = "Phone camera re-paired (frame)"
+                        re_paired = True
+                    else:
+                        self.state.last_android_message = "Phone camera frame received"
                     self._phone_frame_count += 1
                     self._latest_jpeg = raw
                     frame_n = self._phone_frame_count
                     phone_ts = self._last_phone_frame_ts
                     desktop_ts = datetime.now(UTC).isoformat()
                     self._last_desktop_frame_ts = desktop_ts
+                if re_paired and self.on_paired:
+                    try:
+                        self.on_paired()
+                    except Exception:
+                        pass
                 # Save at most one quiet "paired" still — not every N seconds.
-                # Real cheating photos come from env_anomaly (move / leave app).
                 now = time.time()
                 if (
                     self.on_android_event
@@ -348,12 +385,14 @@ class PairingHub:
                     self.state.camera_live = True
                     self.state.last_alive_at = time.time()
                     self.state.last_android_message = "Phone camera paired successfully"
+                    self._authed_ws.add(ws_id)
                 await self._send(websocket, {"type": "pair_ok", "mode": "camera_lock"})
                 if self.on_paired:
                     self.on_paired()
             else:
                 with self._lock:
                     reload_url = self.state.mobile_camera_url
+                    self._authed_ws.discard(ws_id)
                 await self._send(
                     websocket,
                     {
@@ -365,13 +404,16 @@ class PairingHub:
                 )
             return
 
+        if not self._ws_authed(websocket):
+            return
+
         if msg_type == "frame_meta":
             with self._lock:
                 self._last_phone_frame_ts = str(data.get("ts") or "")
             return
 
         if msg_type == "camera_alive":
-            self.touch_alive()
+            self.touch_alive(ws_id=ws_id)
             return
 
         if msg_type == "camera_lost":
@@ -379,7 +421,10 @@ class PairingHub:
             return
 
         if msg_type == "env_anomaly":
-            severity = float(data.get("severity", 0.7))
+            try:
+                severity = float(data.get("severity", 0.7))
+            except (TypeError, ValueError):
+                severity = 0.7
             label = str(data.get("gesture_label") or "ENV")
             plain = str(
                 data.get("plain_language")

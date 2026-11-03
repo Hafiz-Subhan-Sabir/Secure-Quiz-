@@ -32,6 +32,8 @@ ALLOWED_TYPES = frozenset(
     }
 )
 
+_SOFT_RISK_TYPES = frozenset({"heartbeat", "submit", "android_snapshot"})
+
 
 def _grade_submit(db: Session, session: ExamSession, answers: dict) -> None:
     """Score answers against question.correct_index and persist on the session."""
@@ -112,29 +114,37 @@ def sync_events(
     to_insert = [c for c in candidates if c["event_id"] not in existing]
 
     if to_insert:
-        if get_settings().database_url.startswith("sqlite"):
+        db_url = get_settings().database_url
+        if db_url.startswith("sqlite"):
             stmt = sqlite_insert(IntegrityEvent).values(to_insert)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["session_id", "event_id"])
+            db.execute(stmt)
+        elif "postgres" in db_url:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            stmt = pg_insert(IntegrityEvent).values(to_insert)
             stmt = stmt.on_conflict_do_nothing(index_elements=["session_id", "event_id"])
             db.execute(stmt)
         else:
             db.bulk_insert_mappings(IntegrityEvent, to_insert)
 
-    if submit_payload is not None:
+    # Only grade the first real submit — ignore retries that would overwrite the score.
+    if submit_payload is not None and session.status != "submitted":
         session.status = "submitted"
         session.submitted_at = datetime.now(UTC)
         answers = submit_payload.get("answers") or {}
         if isinstance(answers, dict):
             _grade_submit(db, session, answers)
-        # Keep typed student name on the session for admin lists/reports.
         name = str(submit_payload.get("student_name") or "").strip()
         if name and not (getattr(session, "display_name", None) or "").strip():
             session.display_name = name[:200]
 
     if to_insert:
-        peak = max(c["severity"] for c in to_insert)
-        if peak > session.last_risk_score:
-            session.last_risk_score = peak
-        # Backfill display_name + phone paired from event payloads.
+        risk_sevs = [c["severity"] for c in to_insert if c["type"] not in _SOFT_RISK_TYPES]
+        if risk_sevs:
+            peak = max(risk_sevs)
+            if peak > float(session.last_risk_score or 0):
+                session.last_risk_score = peak
         for c in to_insert:
             try:
                 payload = json.loads(c["payload_json"] or "{}")

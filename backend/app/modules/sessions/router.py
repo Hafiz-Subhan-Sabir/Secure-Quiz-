@@ -112,11 +112,16 @@ def list_attempts(
 
     out: list[AttemptSummary] = []
     for session, student, exam in rows:
+        # Soft types match reports — heartbeats/submits must not inflate flags.
+        _SOFT = ("heartbeat", "submit", "android_snapshot")
         event_count = int(
             db.scalar(
                 select(func.count())
                 .select_from(IntegrityEvent)
-                .where(IntegrityEvent.session_id == session.id)
+                .where(
+                    IntegrityEvent.session_id == session.id,
+                    IntegrityEvent.type.notin_(_SOFT),
+                )
             )
             or 0
         )
@@ -126,7 +131,7 @@ def list_attempts(
                 .select_from(IntegrityEvent)
                 .where(
                     IntegrityEvent.session_id == session.id,
-                    IntegrityEvent.type != "heartbeat",
+                    IntegrityEvent.type.notin_(_SOFT),
                     or_(
                         IntegrityEvent.payload_json.like("%image_data_uri%"),
                         IntegrityEvent.payload_json.like("%screen_image_data_uri%"),
@@ -135,6 +140,8 @@ def list_attempts(
             )
             or 0
         )
+        # Flag on real risk score or several meaningful integrity events — not routine check-ins.
+        flagged = float(session.last_risk_score or 0) >= 0.55 or event_count >= 3
         out.append(
             AttemptSummary(
                 session_id=session.id,
@@ -147,7 +154,7 @@ def list_attempts(
                 android_paired=session.android_paired,
                 event_count=event_count,
                 evidence_count=evidence_count,
-                flagged=session.last_risk_score >= 0.55 or event_count > 8,
+                flagged=flagged,
                 quiz_score=int(getattr(session, "quiz_score", 0) or 0),
                 quiz_max_score=int(getattr(session, "quiz_max_score", 0) or 0),
                 quiz_percent=float(getattr(session, "quiz_percent", 0.0) or 0.0),

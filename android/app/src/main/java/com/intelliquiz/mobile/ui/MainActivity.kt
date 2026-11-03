@@ -233,8 +233,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showInstructions(extra: String?) {
+    private fun destroyCameraWebView() {
+        stopEnvWatch()
+        val old = webView
+        webView = null
+        statusView = null
         examCameraActive = false
+        if (old != null) {
+            try {
+                old.stopLoading()
+                (old.parent as? ViewGroup)?.removeView(old)
+                old.destroy()
+            } catch (_: Exception) {
+                /* ignore */
+            }
+        }
+    }
+
+    private fun showInstructions(extra: String?) {
+        destroyCameraWebView()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
@@ -321,26 +338,49 @@ class MainActivity : AppCompatActivity() {
         bridge?.connect()
     }
 
+    private fun isExamPhoneUrl(url: String): Boolean {
+        return try {
+            val uri = Uri.parse(url)
+            if (uri.scheme != "https") return false
+            if (!uri.path.isNullOrBlank() && !uri.path!!.startsWith("/phone")) return false
+            val host = uri.host.orEmpty()
+            val port = if (uri.port > 0) uri.port else 443
+            // Desktop phone HTTPS is always on 8767 for IntelliQuiz.
+            port == 8767 && isPrivateLanHost(host)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun resolvePhoneUrl(intent: Intent?): String? {
         if (intent == null) return null
         val data: Uri? = intent.data
         if (data != null) {
             val asText = data.toString()
-            if (asText.contains("/phone")) return asText
+            if (isExamPhoneUrl(asText)) return asText
         }
         val extra = intent.getStringExtra(EXTRA_PHONE_URL)
-        if (!extra.isNullOrBlank() && extra.startsWith("https://")) return extra
+        if (!extra.isNullOrBlank() && isExamPhoneUrl(extra)) return extra
 
         val shared = intent.getStringExtra(Intent.EXTRA_TEXT)
         if (!shared.isNullOrBlank()) {
-            PairingPayload.tryParseQrText(shared)?.let { return it.toMobileCameraUrl() }
-            if (shared.startsWith("https://") && shared.contains("/phone")) return shared.trim()
+            PairingPayload.tryParseQrText(shared)?.let { parsed ->
+                val url = parsed.toMobileCameraUrl()
+                if (isExamPhoneUrl(url)) return url
+            }
+            val trimmed = shared.trim()
+            if (isExamPhoneUrl(trimmed)) return trimmed
         }
         return null
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun openCameraWebView(url: String) {
+        if (!isExamPhoneUrl(url)) {
+            showInstructions("Unsafe link. Scan only the QR shown on the exam computer.")
+            return
+        }
+        destroyCameraWebView()
         examCameraActive = true
         val root = FrameLayout(this)
         val wv = WebView(this)
@@ -405,7 +445,18 @@ class MainActivity : AppCompatActivity() {
         }
         wv.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
-                request?.grant(request.resources)
+                if (request == null) return
+                val originHost = try {
+                    Uri.parse(request.origin.toString()).host.orEmpty()
+                } catch (_: Exception) {
+                    ""
+                }
+                if (!isPrivateLanHost(originHost)) {
+                    request.deny()
+                    setStatus("Blocked camera for non-exam site.")
+                    return
+                }
+                request.grant(request.resources)
             }
         }
 
@@ -440,20 +491,16 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {
             host.startsWith("192.168.") ||
                 host.startsWith("10.") ||
-                host.startsWith("172.") ||
+                host.matches(Regex("^172\\.(1[6-9]|2[0-9]|3[0-1])\\.")) ||
                 host == "localhost"
         }
     }
 
     override fun onDestroy() {
-        examCameraActive = false
-        stopEnvWatch()
+        destroyCameraWebView()
         envMonitor.stop()
         bridge?.close()
         bridge = null
-        webView?.destroy()
-        webView = null
-        statusView = null
         super.onDestroy()
     }
 

@@ -46,6 +46,8 @@ class SessionState:
     identity_source: str = ""  # webcam | phone
     quiz_paused: bool = False
     pause_reason: str = ""
+    # Independent pause channels — camera/phone refresh must not wipe focus/app.
+    pause_reasons: dict[str, str] = field(default_factory=dict)
     student_alert: str = ""
     require_android_camera: bool = False
     last_result: dict[str, Any] | None = None
@@ -83,6 +85,7 @@ class SessionController:
             kill_browsers=self.settings.app_lock_kill_browsers,
             on_violation=self._on_app_violation,
         )
+        self.app_lock.set_protect_dev_tools(bool(self.settings.app_lock_protect_dev))
         self.focus_guard = FocusGuard(
             away_threshold_sec=self.settings.focus_loss_pause_sec,
             on_away=self._on_focus_away,
@@ -290,20 +293,79 @@ class SessionController:
             "source": "phone",
         }
 
-    def _verify_identity(self) -> tuple[bool, float]:
+    def _phone_face_embedding(self):
+        """Build an identity embedding from the latest phone JPEG, if any."""
+        jpeg = self.pairing.latest_jpeg()
+        if not jpeg:
+            return None
+        try:
+            return embedding_from_jpeg(
+                jpeg,
+                landmarker_path=self.settings.face_landmarker_path,
+            )
+        except Exception:
+            return None
+
+    def _verify_identity(self, *, source: str = "webcam") -> tuple[bool, float]:
         with self._lock:
             email = self.state.email
             deferred = self.state.identity_deferred_phone
-        enrolled = self.identity_store.load(email) if email else None
+        if not email:
+            raise RuntimeError("Sign in before verifying your face")
+        enrolled = self.identity_store.load(email)
+        src = (source or "webcam").strip().lower()
+        if src == "phone":
+            sample = self._phone_face_embedding()
+            if sample is None:
+                raise RuntimeError(
+                    "No face visible on the phone camera. Center your face and try again."
+                )
+            if enrolled is None:
+                if deferred:
+                    # First-time phone path: enroll from this verified sample.
+                    self.identity_store.save(email, sample)
+                    with self._lock:
+                        self.state.identity_deferred_phone = False
+                    return True, 1.0
+                raise RuntimeError("Enroll your face before starting the exam.")
+            return verify(enrolled, sample, threshold=self.settings.identity_match_threshold)
+
         if enrolled is None:
-            if deferred:
-                # Phone-only path: verification happens visually via paired phone camera.
-                return True, 1.0
             raise RuntimeError("Enroll your face before starting the exam.")
         sample = self.monitor.identity_sample()
         if sample is None:
             raise RuntimeError("Face sample unavailable — look at the webcam and try again.")
         return verify(enrolled, sample, threshold=self.settings.identity_match_threshold)
+
+    def _set_pause_reason(self, key: str, message: str) -> None:
+        with self._lock:
+            self.state.pause_reasons[key] = message
+            self._recompute_pause_locked()
+
+    def _clear_pause_reason(self, key: str) -> None:
+        with self._lock:
+            self.state.pause_reasons.pop(key, None)
+            self._recompute_pause_locked()
+
+    def _clear_all_pauses(self) -> None:
+        with self._lock:
+            self.state.pause_reasons.clear()
+            self.state.quiz_paused = False
+            self.state.pause_reason = ""
+
+    def _recompute_pause_locked(self) -> None:
+        """Caller must hold self._lock. Prefer phone/camera messages over focus/app."""
+        reasons = self.state.pause_reasons
+        if not reasons:
+            self.state.quiz_paused = False
+            self.state.pause_reason = ""
+            return
+        self.state.quiz_paused = True
+        for key in ("phone", "camera", "app", "focus", "phone_motion"):
+            if key in reasons:
+                self.state.pause_reason = reasons[key]
+                return
+        self.state.pause_reason = next(iter(reasons.values()))
 
     # ── auth / exam bootstrap ──────────────────────────────────────────
     def login(self, email: str, password: str, *, display_name: str = "") -> dict[str, Any]:
@@ -315,12 +377,13 @@ class SessionController:
         # Prefer the name the student typed (what admins should see on reports).
         shown_name = typed_name or account_name or email.split("@")[0]
         with self._lock:
-            self.state.phase = "login"
-            self.state.email = email
-            self.state.full_name = shown_name
-            self.state.role = data["role"]
-            self.state.error = ""
-            self.state.identity_deferred_phone = False
+            # Fresh login must not inherit a prior student's session / face flags.
+            self.state = SessionState(
+                phase="login",
+                email=email,
+                full_name=shown_name,
+                role=data["role"],
+            )
         # Open webcam early so enroll/setup does not race a cold camera open.
         if not self.monitor.snapshot.running:
             self.monitor.start("identity-enroll")
@@ -454,6 +517,7 @@ class SessionController:
             self.state.android_paired = False
             self.state.face_verified = False
             self.state.identity_source = ""
+            self.state.pause_reasons.clear()
             self.state.quiz_paused = False
             self.state.pause_reason = ""
             self.state.require_android_camera = require_android
@@ -527,6 +591,12 @@ class SessionController:
                 raise RuntimeError(
                     "Phone camera is not paired yet. Scan the QR with your phone and wait for the green lock."
                 )
+            matched, score = self._verify_identity(source="phone")
+            if not matched:
+                raise RuntimeError(
+                    f"Face identity mismatch on phone ({score:.0%} match). "
+                    "Center your enrolled face or re-enroll from the login step."
+                )
             with self._lock:
                 self.state.face_verified = True
                 self.state.identity_source = "phone"
@@ -536,7 +606,13 @@ class SessionController:
             self._append(
                 "heartbeat",
                 0.0,
-                {"source": "confirm_camera", "identity_source": "phone", "android_paired": True},
+                {
+                    "source": "confirm_camera",
+                    "identity_source": "phone",
+                    "android_paired": True,
+                    "identity_score": score,
+                },
+                sync_now=False,
             )
             return {
                 "ok": True,
@@ -555,7 +631,7 @@ class SessionController:
                 "Show exactly one face, centered and well lit, then try again."
             )
 
-        matched, score = self._verify_identity()
+        matched, score = self._verify_identity(source="webcam")
         if not matched:
             raise RuntimeError(
                 f"Face identity mismatch ({score:.0%} match). Use your enrolled face or re-enroll from the login step."
@@ -577,6 +653,7 @@ class SessionController:
                 "identity_score": score,
                 "android_paired": paired,
             },
+            sync_now=False,
         )
         return {
             "ok": True,
@@ -592,7 +669,7 @@ class SessionController:
         status = self.pairing.status()
         paired = bool(status.get("paired") or self.state.android_paired)
 
-        # Auto-confirm if setup was skipped: webcam wins when present; phone only if no webcam.
+        # Auto-confirm if setup was skipped — still require a real identity match.
         if not self.state.face_verified:
             mon = self.monitor.status()
             webcam_ok = bool(mon.get("camera_ok"))
@@ -602,10 +679,20 @@ class SessionController:
                     raise RuntimeError(
                         "This PC has a webcam. Complete the PC face check before starting the quiz."
                     )
+                matched, score = self._verify_identity(source="webcam")
+                if not matched:
+                    raise RuntimeError(
+                        f"Face identity mismatch ({score:.0%} match). Complete camera setup again."
+                    )
                 with self._lock:
                     self.state.face_verified = True
                     self.state.identity_source = "webcam"
             elif paired:
+                matched, score = self._verify_identity(source="phone")
+                if not matched:
+                    raise RuntimeError(
+                        f"Face identity mismatch on phone ({score:.0%} match). Complete camera setup again."
+                    )
                 with self._lock:
                     self.state.face_verified = True
                     self.state.identity_source = self.state.identity_source or "phone"
@@ -626,6 +713,7 @@ class SessionController:
         with self._lock:
             self.state.phase = "exam"
             self.state.android_paired = paired
+            self.state.pause_reasons.clear()
             self.state.quiz_paused = False
             self.state.pause_reason = ""
             if not self.state.student_alert:
@@ -642,6 +730,7 @@ class SessionController:
                 "identity_source": self.state.identity_source,
                 "killed": killed,
             },
+            sync_now=False,
         )
         return {
             "ok": True,
@@ -664,11 +753,9 @@ class SessionController:
     def submit(self, *, force: bool = False) -> dict[str, Any]:
         self._refresh_pause_state()
         if self.state.quiz_paused and not force:
-            # Allow a final forced submit so students are not trapped if the phone drops
-            # at the last second — integrity already logged the camera loss.
             raise RuntimeError(
                 (self.state.pause_reason or "Quiz paused — restore camera access first")
-                + " Or submit anyway with force=true after reconnecting is impossible."
+                + " You can force-submit if the camera cannot be restored."
             )
         with self._lock:
             sid = self.state.session_id
@@ -686,6 +773,7 @@ class SessionController:
                     "plain_language": "Exam submitted while identity camera was unavailable.",
                     "gesture_label": "SUBMIT_WHILE_PAUSED",
                 },
+                sync_now=False,
             )
         sync_result = self._append(
             "submit",
@@ -696,8 +784,9 @@ class SessionController:
                 "session_risk": risk,
                 "submitted_while_paused": paused,
             },
+            sync_now=True,
         )
-        # Extra flush in case submit batch had partial failure
+        # Extra flush until local queue is empty or we hit a hard error.
         try:
             extra = self.sync.flush(sid)
             if isinstance(sync_result, dict) and isinstance(extra, dict):
@@ -707,11 +796,22 @@ class SessionController:
                     + int(extra.get("duplicates", 0)),
                     "rejected": int(sync_result.get("rejected", 0)) + int(extra.get("rejected", 0)),
                     "flushed": int(sync_result.get("flushed", 0)) + int(extra.get("flushed", 0)),
+                    "error": extra.get("error") or sync_result.get("error"),
                 }
             else:
                 sync_result = extra
-        except Exception:
-            pass
+        except Exception as exc:
+            if isinstance(sync_result, dict):
+                sync_result["error"] = str(exc)
+        sync_ok = not (isinstance(sync_result, dict) and sync_result.get("error"))
+        still_pending = bool(self.store.unsynced(sid, limit=1))
+        if still_pending:
+            sync_ok = False
+            if isinstance(sync_result, dict):
+                sync_result.setdefault(
+                    "error",
+                    "Submit saved locally but not fully synced — keep this window open.",
+                )
         try:
             self.api.heartbeat(sid, risk_score=float(risk), android_paired=self.state.android_paired)
         except Exception:
@@ -720,10 +820,12 @@ class SessionController:
         with self._lock:
             self.state.phase = "submitted"
             self.state.last_result = result
-        self.shutdown_runtime(keep_store=True)
+        # Keep the exam Edge/Chrome window alive so the result screen can render.
+        self.shutdown_runtime(keep_store=True, close_exam_shell=False)
         return {
             "ok": True,
             "sync": sync_result,
+            "sync_ok": sync_ok,
             "answers": answers,
             "risk": risk,
             "forced": paused,
@@ -755,10 +857,12 @@ class SessionController:
             full_name = self.state.full_name
             role = self.state.role
 
+        cleared = False
         if clear_local and old_sid:
-            self._clear_local_session_artifacts(old_sid)
+            cleared = self._clear_local_session_artifacts(old_sid, require_synced=True)
 
-        self.shutdown_runtime(keep_store=True)
+        # Keep the exam browser open — student picks the next exam in the same window.
+        self.shutdown_runtime(keep_store=True, close_exam_shell=False)
         with self._lock:
             self.state = SessionState(
                 phase="login",
@@ -770,7 +874,7 @@ class SessionController:
             "ok": True,
             "email": email,
             "full_name": full_name,
-            "cleared_local": bool(clear_local and old_sid),
+            "cleared_local": cleared,
             "storage_hint": self._storage_hint(),
         }
 
@@ -778,8 +882,9 @@ class SessionController:
         with self._lock:
             old_sid = self.state.session_id
         if clear_local and old_sid:
-            self._clear_local_session_artifacts(old_sid)
-        self.shutdown_runtime(keep_store=True)
+            self._clear_local_session_artifacts(old_sid, require_synced=True)
+        # Keep window for login screen; process exit closes the shell.
+        self.shutdown_runtime(keep_store=True, close_exam_shell=False)
         with self._lock:
             self.state = SessionState()
         self.api.token = None
@@ -835,6 +940,13 @@ class SessionController:
     def resume_after_camera(self) -> dict[str, Any]:
         """Clear pause once the required camera is healthy again."""
         self._refresh_pause_state()
+        # If prohibited apps are gone, drop the app pause channel.
+        try:
+            hits, _ = self.app_lock.enforce_once()
+            if not hits:
+                self._clear_pause_reason("app")
+        except Exception:
+            pass
         if self.state.quiz_paused:
             raise RuntimeError(self.state.pause_reason or "Camera is still unavailable")
         with self._lock:
@@ -842,11 +954,15 @@ class SessionController:
         return {"ok": True, "quiz_paused": False}
 
     def mark_phone_paired(self) -> dict[str, Any]:
+        if not self.settings.allow_lab_bypasses:
+            raise PermissionError("Lab pairing bypass is disabled")
         self.pairing.mark_paired_local()
         return self.pairing.status()
 
     def simulate_abnormal(self) -> dict[str, Any]:
         """Lab helper: force an evidence capture as if ML fired."""
+        if not self.settings.allow_lab_bypasses:
+            raise PermissionError("Lab simulate endpoint is disabled")
         payload = self.monitor.force_capture(
             "simulated_abnormal_gesture",
             gesture_label="SH",
@@ -867,11 +983,17 @@ class SessionController:
             sid = self.state.session_id or "camera-reconnect"
         return self.monitor.restart(sid)
 
-    def shutdown_runtime(self, *, keep_store: bool = False) -> None:
+    def shutdown_runtime(
+        self,
+        *,
+        keep_store: bool = False,
+        close_exam_shell: bool = True,
+    ) -> None:
         self._hb_stop.set()
         self.focus_guard.stop()
         self.app_lock.stop()
-        self.exam_shell.close()
+        if close_exam_shell:
+            self.exam_shell.close()
         self.monitor.stop()
         self.pairing.stop()
         try:
@@ -920,24 +1042,40 @@ class SessionController:
             ),
         }
 
-    def _clear_local_session_artifacts(self, session_id: str) -> None:
+    def _clear_local_session_artifacts(
+        self,
+        session_id: str,
+        *,
+        require_synced: bool = False,
+    ) -> bool:
+        """Delete local session rows. When require_synced, flush first and refuse if still pending."""
+        if require_synced:
+            try:
+                self.sync.flush(session_id)
+            except Exception:
+                pass
+            if self.store.unsynced(session_id, limit=1):
+                raise RuntimeError(
+                    "Cannot clear local exam data — answers/events are not synced to the server yet. "
+                    "Check your network and try again."
+                )
         try:
             self.store.delete_session(session_id)
         except Exception:
             pass
         evidence_dir = Path(self.settings.data_dir) / "evidence"
-        if not evidence_dir.exists():
-            return
-        prefix = f"{session_id[:8]}_"
-        try:
-            for path in evidence_dir.iterdir():
-                if path.name.startswith(prefix):
-                    try:
-                        path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        if evidence_dir.exists():
+            prefix = f"{session_id[:8]}_"
+            try:
+                for path in evidence_dir.iterdir():
+                    if path.name.startswith(prefix):
+                        try:
+                            path.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        return True
 
     # ── internal event plumbing ────────────────────────────────────────
     def _append(
@@ -946,11 +1084,15 @@ class SessionController:
         severity: float,
         payload: dict[str, Any],
         *,
-        sync_now: bool = True,
+        sync_now: bool = False,
     ) -> dict[str, Any]:
+        """Persist locally; default is async flush so camera/WS loops never block on HTTP."""
         sid = self.state.session_id
         if not sid:
             return {"accepted": 0, "duplicates": 0, "rejected": 0, "flushed": 0}
+        # Skip fake enroll-* session IDs — server would reject them forever.
+        if sid.startswith("enroll-") or sid.startswith("camera-"):
+            return {"accepted": 0, "duplicates": 0, "rejected": 0, "flushed": 0, "skipped": True}
         enriched = {
             **payload,
             "student_name": self.state.full_name or self.state.email,
@@ -963,7 +1105,6 @@ class SessionController:
         if not sync_now:
             self.sync.request_flush(sid)
             return {"accepted": 0, "duplicates": 0, "rejected": 0, "flushed": 0, "deferred": True}
-        # Final/critical path — still off the UI thread via sync pool when possible.
         fut = submit_sync(self.sync.flush, sid)
         try:
             return fut.result(timeout=20)
@@ -1004,11 +1145,11 @@ class SessionController:
             enriched.setdefault("cheating_attempt", True)
             enriched.setdefault("flag", "phone_helper_app")
             if self.state.phase == "exam" and severity >= 0.6:
+                self._set_pause_reason(
+                    "phone_motion",
+                    "Phone camera moved or left. Keep the IntelliQuiz camera page open.",
+                )
                 with self._lock:
-                    self.state.quiz_paused = True
-                    self.state.pause_reason = (
-                        "Phone camera moved or left. Keep the IntelliQuiz camera page open."
-                    )
                     self.state.student_alert = (
                         "Phone camera issue — keep the page open and steady."
                     )
@@ -1025,28 +1166,36 @@ class SessionController:
     def _on_paired(self) -> None:
         with self._lock:
             self.state.android_paired = True
-            if self.state.phase == "exam":
-                # Resume when phone returns, unless another pause reason is active.
-                if "phone" in (self.state.pause_reason or "").lower() or "IntelliQuiz camera" in (
-                    self.state.pause_reason or ""
-                ):
-                    self.state.quiz_paused = False
-                    self.state.pause_reason = ""
-        self._append("heartbeat", 0.0, {"source": "android_paired", "android_paired": True})
+        if self.state.phase == "exam":
+            self._clear_pause_reason("phone")
+            self._clear_pause_reason("phone_motion")
+        self._append(
+            "heartbeat",
+            0.0,
+            {"source": "android_paired", "android_paired": True},
+            sync_now=False,
+        )
 
     def _on_unpaired(self) -> None:
         with self._lock:
-            self.state.android_paired = False
-            if self.state.phase == "exam" and (
+            phase = self.state.phase
+            require_phone = (
                 self.settings.require_android_camera_always
                 or self.state.require_android_camera
                 or self.state.identity_source == "phone"
-            ):
-                self.state.quiz_paused = True
-                self.state.pause_reason = (
-                    "Phone disconnected. Open IntelliQuiz on phone, scan QR again, keep page open."
-                )
-                self.state.student_alert = "Phone camera lost — quiz paused. Re-pair to continue."
+            )
+            self.state.android_paired = False
+
+        # Only pause / flag during the live exam — not setup, enrollment, or after submit.
+        if phase != "exam" or not require_phone:
+            return
+
+        self._set_pause_reason(
+            "phone",
+            "Phone disconnected. Open IntelliQuiz on phone, scan QR again, keep page open.",
+        )
+        with self._lock:
+            self.state.student_alert = "Phone camera lost — quiz paused. Re-pair to continue."
 
         enriched: dict[str, Any] = {
             "source": "android_camera",
@@ -1055,7 +1204,6 @@ class SessionController:
             "cheating_attempt": True,
             "flag": "phone_disconnected",
         }
-        # Capture PC screen + last phone frame for admin (exam only).
         screen = self._try_screen_capture()
         if screen:
             enriched["screen_image_data_uri"] = screen
@@ -1066,10 +1214,10 @@ class SessionController:
             enriched["image_data_uri"] = (
                 "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
             )
-        self._append("no_face", 0.85, enriched)
+        self._append("no_face", 0.85, enriched, sync_now=False)
 
     def _refresh_pause_state(self) -> None:
-        """Pause the quiz when the identity camera is gone; clear pause when it returns."""
+        """Update camera/phone pause channels only — never wipe focus/app pauses."""
         with self._lock:
             if self.state.phase != "exam":
                 return
@@ -1081,44 +1229,37 @@ class SessionController:
         if not pair.get("paired"):
             phone_ok = False
 
-        # Phone secondary camera is mandatory for all exams when configured.
         if require_phone and not phone_ok:
             with self._lock:
-                self.state.quiz_paused = True
                 self.state.android_paired = False
-                self.state.pause_reason = (
-                    "Phone camera required. Open IntelliQuiz on phone → Allow camera → Wait for Paired."
-                )
-            return
+            self._set_pause_reason(
+                "phone",
+                "Phone camera required. Open IntelliQuiz on phone → Allow camera → Wait for Paired.",
+            )
+        elif phone_ok:
+            with self._lock:
+                self.state.android_paired = True
+            self._clear_pause_reason("phone")
 
         if source == "phone":
-            with self._lock:
-                if not phone_ok:
-                    self.state.quiz_paused = True
-                    self.state.android_paired = False
-                    self.state.pause_reason = (
-                        "Phone camera required. Open QR link → Allow camera → Wait for Paired."
-                    )
-                else:
-                    self.state.quiz_paused = False
-                    self.state.android_paired = True
-                    self.state.pause_reason = ""
+            if not phone_ok:
+                self._set_pause_reason(
+                    "phone",
+                    "Phone camera required. Open QR link → Allow camera → Wait for Paired.",
+                )
+            # Phone-identity exams do not use the PC webcam pause channel.
+            self._clear_pause_reason("camera")
             return
 
-        # Webcam identity (phone may still be paired as secondary)
         mon = self.monitor.status()
         ok = bool(mon.get("camera_ok"))
-        with self._lock:
-            if not ok:
-                self.state.quiz_paused = True
-                self.state.pause_reason = (
-                    "PC webcam lost. Reconnect or allow camera, then continue."
-                )
-            else:
-                self.state.quiz_paused = False
-                self.state.pause_reason = ""
-                if phone_ok:
-                    self.state.android_paired = True
+        if not ok:
+            self._set_pause_reason(
+                "camera",
+                "PC webcam lost. Reconnect or allow camera, then continue.",
+            )
+        else:
+            self._clear_pause_reason("camera")
 
     def _flush_pending_sync(self) -> None:
         try:
@@ -1131,10 +1272,10 @@ class SessionController:
         with self._lock:
             if self.state.phase != "exam":
                 return
-            self.state.quiz_paused = True
-            self.state.pause_reason = (
-                f"Another app took focus ({process_name}). Return to the exam."
-            )
+        self._set_pause_reason(
+            "focus",
+            f"Another app took focus ({process_name}). Return to the exam.",
+        )
         self._append(
             "app_violation",
             0.65,
@@ -1143,34 +1284,32 @@ class SessionController:
                 "plain_language": f"Student switched away from exam to {process_name}.",
                 "foreground_process": process_name,
             },
+            sync_now=False,
         )
 
     def _on_focus_return(self) -> None:
         with self._lock:
             if self.state.phase != "exam":
                 return
-            self.state.quiz_paused = False
-            self.state.pause_reason = ""
+        self._clear_pause_reason("focus")
 
     def _on_app_violation(self, hits: list[ProcessHit], killed: list[str]) -> None:
         if not hits:
             return
-        # During phone pairing we still close apps, but do not file cheating reports
-        # (Edge/Chrome exam window + QR screen were falsely flagged before).
+        # During phone pairing we still close apps, but do not file cheating reports.
         with self._lock:
             phase = self.state.phase
         if phase != "exam":
             return
         hard = [h for h in hits if h.category == "hard"]
         browsers = [h for h in hits if h.category == "browser"]
-        # Browsers alone are weaker signal once exam Edge/Chrome is protected.
         severity = 0.9 if hard else (0.75 if browsers else 0.55)
         names = sorted({h.name for h in hits})
+        self._set_pause_reason(
+            "app",
+            "Prohibited app detected. Close helper apps and return here.",
+        )
         with self._lock:
-            self.state.quiz_paused = True
-            self.state.pause_reason = (
-                "Prohibited app detected. Close helper apps and return here."
-            )
             self.state.student_alert = (
                 "Prohibited app: " + ", ".join(names) + ". Photo saved for admin."
             )
@@ -1198,7 +1337,7 @@ class SessionController:
                 )
         except Exception:
             pass
-        self._append("app_violation", severity, payload)
+        self._append("app_violation", severity, payload, sync_now=False)
 
     def _start_heartbeat(self) -> None:
         if self._hb_thread and self._hb_thread.is_alive():

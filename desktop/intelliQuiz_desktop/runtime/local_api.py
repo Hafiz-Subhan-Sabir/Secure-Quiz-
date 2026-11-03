@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,11 @@ from pydantic import BaseModel, Field
 from intelliQuiz_desktop.runtime.session_controller import SessionController
 
 UI_DIR = Path(__file__).resolve().parents[1] / "ui"
+
+
+def _is_loopback(request: Request) -> bool:
+    host = (request.client.host if request.client else "") or ""
+    return host in {"127.0.0.1", "::1", "localhost"}
 
 
 class LoginBody(BaseModel):
@@ -128,8 +133,13 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/pairing/mark")
-    def mark_paired() -> dict[str, Any]:
-        return ctrl.mark_phone_paired()
+    def mark_paired(request: Request) -> dict[str, Any]:
+        if not ctrl.settings.allow_lab_bypasses or not _is_loopback(request):
+            raise HTTPException(status_code=403, detail="Lab pairing bypass disabled")
+        try:
+            return ctrl.mark_phone_paired()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.post("/api/phase/resume")
     def resume_exam() -> dict[str, Any]:
@@ -150,9 +160,10 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
         try:
             return ctrl.submit(force=force)
         except Exception as exc:
-            # Auto-retry once as forced submit when camera pause blocks the student
             detail = str(exc)
-            if "paused" in detail.lower() or "camera" in detail.lower():
+            # Only auto-force for camera/phone pauses — not focus/app lockdown pauses.
+            lower = detail.lower()
+            if not force and ("camera" in lower or "phone" in lower) and "paused" in lower:
                 try:
                     return ctrl.submit(force=True)
                 except Exception as exc2:
@@ -189,8 +200,13 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
         return ctrl.storage_info()
 
     @app.post("/api/simulate-abnormal")
-    def simulate() -> dict[str, Any]:
-        return ctrl.simulate_abnormal()
+    def simulate(request: Request) -> dict[str, Any]:
+        if not ctrl.settings.allow_lab_bypasses or not _is_loopback(request):
+            raise HTTPException(status_code=403, detail="Lab simulate endpoint disabled")
+        try:
+            return ctrl.simulate_abnormal()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @app.post("/api/camera/reconnect")
     def camera_reconnect() -> dict[str, Any]:
@@ -251,7 +267,7 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
         except Exception:
             pass
         finally:
-            ctrl.pairing.client_disconnected()
+            ctrl.pairing.client_disconnected(ws_id=id(websocket))
 
     @app.get("/")
     def index() -> FileResponse:

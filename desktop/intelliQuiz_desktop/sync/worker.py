@@ -127,6 +127,27 @@ class SyncWorker:
                 return {**result, "flushed": len(valid), "rejected_local": len(invalid_ids)}
             except Exception as exc:
                 last_error = str(exc)
+                # Client errors (4xx) will never succeed — mark poison-pill and move on
+                # so one bad event cannot wedge the whole session including submit.
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                msg = str(exc).lower()
+                is_client_error = (
+                    isinstance(status, int) and 400 <= status < 500
+                ) or any(
+                    token in msg
+                    for token in ("'400", "'401", "'403", "'404", "'409", "'422", " 400 ", " 401 ", " 403 ", " 404 ")
+                )
+                if is_client_error:
+                    self.store.mark_synced([e.event_id for e in valid])
+                    return {
+                        "accepted": 0,
+                        "duplicates": 0,
+                        "rejected": len(valid),
+                        "flushed": 0,
+                        "rejected_local": len(invalid_ids),
+                        "error": last_error,
+                        "poison_pill": True,
+                    }
                 if attempt < self.max_retries - 1:
                     time.sleep(0.4 * (2**attempt))
         return {

@@ -79,12 +79,16 @@ class DesktopSettings(BaseSettings):
     monitor_fps: float = 4.0
     gesture_capture_threshold: float = 0.4
     capture_cooldown_sec: float = 3.0
-    # Kill chat/remote tools during exam. Browsers are flagged but not killed
-    # while the exam UI runs in a browser (production would use kiosk WebView).
+    # Kill chat/remote tools during exam. Non-exam browsers are killed when the
+    # exam Edge/Chrome profile is protected; exam browser PIDs are never flagged.
     app_lock_kill: bool = True
     app_lock_kill_browsers: bool = True
-    # When true, do not kill Cursor/VS Code during lockdown (lab/dev machines).
-    app_lock_protect_dev: bool = False
+    # Protect Cursor/VS Code by default so lab machines and the desktop runtime
+    # parent tree are not taskkill'd mid-exam. Set IQ_DESKTOP_APP_LOCK_PROTECT_DEV=false
+    # for strict production lockdown machines.
+    app_lock_protect_dev: bool = True
+    # Lab-only endpoints (/api/pairing/mark, /api/simulate-abnormal) — localhost only when False.
+    allow_lab_bypasses: bool = False
     exam_kiosk_mode: bool = True
     # Always require a paired phone camera during exams (even if PC has a webcam).
     require_android_camera_always: bool = True

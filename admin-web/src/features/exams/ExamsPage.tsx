@@ -94,9 +94,23 @@ export function ExamsPage() {
   async function onAddQuestion(e: FormEvent) {
     e.preventDefault();
     if (!selectedId) return;
-    const choices = qChoices.map((c) => c.trim()).filter(Boolean);
+    // Map the selected index through blanks so filtering choices does not
+    // shift the answer key (e.g. A filled, B blank, C correct → index 1 not 2).
+    const trimmed = qChoices.map((c) => c.trim());
+    const correctText = trimmed[qCorrect] ?? "";
+    const choices: string[] = [];
+    let correctIndex = -1;
+    trimmed.forEach((text, originalIndex) => {
+      if (!text) return;
+      if (originalIndex === qCorrect) correctIndex = choices.length;
+      choices.push(text);
+    });
     if (choices.length < 2) {
       setError("Add at least two answer choices.");
+      return;
+    }
+    if (!correctText || correctIndex < 0) {
+      setError("Mark a non-empty choice as the correct answer.");
       return;
     }
     setSaving(true);
@@ -105,7 +119,7 @@ export function ExamsPage() {
       await api.createQuestion(selectedId, {
         prompt: qPrompt.trim(),
         choices,
-        correct_index: Math.min(qCorrect, choices.length - 1),
+        correct_index: correctIndex,
       });
       setQPrompt("");
       setQChoices([...EMPTY_CHOICES]);

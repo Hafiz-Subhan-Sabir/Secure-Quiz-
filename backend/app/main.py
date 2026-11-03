@@ -25,6 +25,22 @@ from app.seed import seed_if_empty
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    settings = get_settings()
+    if settings.jwt_secret == "change-me-in-production-use-long-random-secret":
+        import logging
+
+        logging.getLogger("intelliquiz").warning(
+            "IQ_JWT_SECRET is still the default — set a long random secret in production."
+        )
+    if settings.database_url.startswith("sqlite") and (
+        __import__("os").environ.get("RAILWAY_ENVIRONMENT")
+        or (__import__("os").environ.get("IQ_ENV") or "").lower() in {"production", "prod"}
+    ):
+        import logging
+
+        logging.getLogger("intelliquiz").error(
+            "SQLite on Railway/production loses students on every redeploy — set IQ_DATABASE_URL to Postgres."
+        )
     Base.metadata.create_all(bind=engine)
     ensure_schema_patches()
     seed_if_empty()
@@ -100,7 +116,21 @@ def _mount_admin_spa(app: FastAPI, static_dir: str) -> None:
 
     @app.get("/{full_path:path}")
     def admin_spa(full_path: str) -> FileResponse:
-        candidate = root / full_path
+        from fastapi import HTTPException
+
+        # Never let unknown /api/* fall through to HTML (old "users missing" failure mode).
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
+        # Contain file reads under the SPA root — block path traversal.
+        try:
+            candidate = (root / full_path).resolve()
+            root_resolved = root.resolve()
+            if not str(candidate).startswith(str(root_resolved)):
+                raise HTTPException(status_code=404, detail="Not found")
+        except HTTPException:
+            raise
+        except Exception:
+            return FileResponse(index)
         if candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(index)

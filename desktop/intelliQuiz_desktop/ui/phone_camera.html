@@ -482,6 +482,10 @@
             notifyLost("Phone camera track ended");
             return;
           }
+          // Re-send pair if soft-expired on the PC while this socket stayed open.
+          if (!paired) {
+            sendJson({ type: "pair", session_id: sessionId, pairing_token: token });
+          }
           sendJson({ type: "camera_alive" });
         }, 2500);
       }
