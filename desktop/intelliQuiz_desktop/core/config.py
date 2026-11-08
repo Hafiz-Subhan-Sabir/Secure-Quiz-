@@ -83,10 +83,10 @@ class DesktopSettings(BaseSettings):
     # exam Edge/Chrome profile is protected; exam browser PIDs are never flagged.
     app_lock_kill: bool = True
     app_lock_kill_browsers: bool = True
-    # Protect Cursor/VS Code by default so lab machines and the desktop runtime
-    # parent tree are not taskkill'd mid-exam. Set IQ_DESKTOP_APP_LOCK_PROTECT_DEV=false
-    # for strict production lockdown machines.
-    app_lock_protect_dev: bool = True
+    # When True, Cursor/VS Code/devenv are spared from app-lock kills (lab only).
+    # Production exams must close those tools — keep False so Cursor is terminated
+    # on continue/start. Override with IQ_DESKTOP_APP_LOCK_PROTECT_DEV=true for labs.
+    app_lock_protect_dev: bool = False
     # Lab-only endpoints (/api/pairing/mark, /api/simulate-abnormal) — localhost only when False.
     allow_lab_bypasses: bool = False
     exam_kiosk_mode: bool = True

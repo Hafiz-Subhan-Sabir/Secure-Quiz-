@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -289,152 +288,93 @@ class FaceMonitor:
             score += 15.0
         return score
 
-    def _device_name(self, idx: int) -> str:
-        # Best-effort; OpenCV does not always expose names on Windows.
+    def _init_com_for_camera(self) -> None:
+        """DirectShow needs COM on this thread (common PyInstaller + webcam issue)."""
         try:
-            import cv2 as _cv2
+            import ctypes
 
-            cap = _cv2.VideoCapture(idx, getattr(_cv2, "CAP_DSHOW", 700))
-            if not cap.isOpened():
-                return ""
-            name = ""
-            try:
-                # CAP_PROP_BACKEND / custom — not portable; leave empty if unavailable.
-                name = str(cap.get(getattr(_cv2, "CAP_PROP_SETTINGS", 0)) or "")
-            except Exception:
-                name = ""
-            cap.release()
-            return name
+            # COINIT_MULTITHREADED = 0x0 — safe for background capture threads
+            ctypes.windll.ole32.CoInitializeEx(None, 0x0)
         except Exception:
-            return ""
-
-    def _open_one(self, idx: int, backend: int, gen: int) -> tuple[Any, int, float] | None:
-        """Open a single index/backend candidate. Caller owns release on discard."""
-        import cv2 as _cv2
-
-        if self._stop.is_set() or gen != self._generation:
-            return None
-        trial = None
-        try:
-            trial = _cv2.VideoCapture(idx, backend)
-            if not trial.isOpened():
-                trial.release()
-                return None
-            try:
-                trial.set(_cv2.CAP_PROP_FRAME_WIDTH, 640)
-                trial.set(_cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                trial.set(_cv2.CAP_PROP_BUFFERSIZE, 1)
-            except Exception:
-                pass
-            good_frame = None
-            for i in range(8):
-                if self._stop.is_set() or gen != self._generation:
-                    break
-                ok_f, frm = trial.read()
-                if not ok_f or frm is None or getattr(frm, "size", 0) == 0:
-                    time.sleep(0.04)
-                    continue
-                mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
-                if mean > 0.5 or i >= 5:
-                    good_frame = frm
-                    break
-                time.sleep(0.04)
-            if good_frame is None:
-                trial.release()
-                return None
-            score = self._score_candidate(good_frame, idx, self._device_name(idx))
-            return trial, idx, score
-        except Exception:
-            if trial is not None:
-                try:
-                    trial.release()
-                except Exception:
-                    pass
-            return None
+            pass
 
     def _try_open_camera(self, gen: int) -> tuple[Any, int] | tuple[None, int]:
-        """Open the best webcam.
+        """Open webcam the same way early working builds did.
 
-        Preferred index backends are probed in parallel (DSHOW/MSMF) on a small
-        pool; remaining indices are scanned only if needed.
+        Accept ``isOpened()`` first (old commits), then warm up frames.
+        Sequential backends only — never open DSHOW+MSMF in parallel.
         """
         import cv2 as _cv2
 
         preferred = int(self.settings.camera_index)
+        # DSHOW first — more reliable for laptop webcams inside frozen EXEs.
         backends = (
-            getattr(_cv2, "CAP_DSHOW", 700),
-            getattr(_cv2, "CAP_MSMF", 1400),
-            0,
+            ("DSHOW", getattr(_cv2, "CAP_DSHOW", 700)),
+            ("MSMF", getattr(_cv2, "CAP_MSMF", 1400)),
+            ("ANY", 0),
         )
+        indices = [preferred] + [i for i in range(0, 4) if i != preferred]
 
-        # Parallel probe preferred index backends — first strong score wins.
-        best: tuple[Any, int, float] | None = None
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="iq-cam") as pool:
-            futs = [pool.submit(self._open_one, preferred, backend, gen) for backend in backends[:2]]
-            try:
-                for fut in as_completed(futs, timeout=8):
-                    if self._stop.is_set() or gen != self._generation:
-                        break
+        for idx in indices:
+            if self._stop.is_set() or gen != self._generation:
+                return None, preferred
+            for be_name, backend in backends:
+                if self._stop.is_set() or gen != self._generation:
+                    return None, preferred
+                trial = None
+                try:
+                    trial = _cv2.VideoCapture(idx, backend)
+                    if not trial.isOpened():
+                        print(f"  Webcam   fail idx={idx} {be_name}: not opened", flush=True)
+                        trial.release()
+                        continue
+                    # Old working path: trust isOpened, then configure + warm up.
                     try:
-                        got = fut.result()
+                        trial.set(_cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        trial.set(_cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        trial.set(_cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception:
-                        continue
-                    if not got:
-                        continue
-                    trial, idx, score = got
-                    if best is None or score > best[2]:
-                        if best is not None:
-                            try:
-                                best[0].release()
-                            except Exception:
-                                pass
-                        best = (trial, idx, score)
-                        if score >= 40.0:
+                        pass
+                    warm_ok = False
+                    last_mean = None
+                    for i in range(20):
+                        if self._stop.is_set() or gen != self._generation:
                             break
-                    else:
+                        ok_f, frm = trial.read()
+                        if ok_f and frm is not None and getattr(frm, "size", 0) > 0:
+                            last_mean = float(frm.mean()) if hasattr(frm, "mean") else 0.0
+                            # Accept any readable frame (dim rooms / IR can be dark).
+                            if last_mean > 0.1 or i >= 5:
+                                warm_ok = True
+                                break
+                        time.sleep(0.05)
+                    if not warm_ok:
+                        print(
+                            f"  Webcam   fail idx={idx} {be_name}: opened but no frame mean={last_mean}",
+                            flush=True,
+                        )
+                        trial.release()
+                        continue
+                    print(
+                        f"  Webcam   opened idx={idx} {be_name} mean={last_mean:.1f}",
+                        flush=True,
+                    )
+                    return trial, idx
+                except Exception as exc:
+                    print(f"  Webcam   fail idx={idx} {be_name}: {exc}", flush=True)
+                    if trial is not None:
                         try:
                             trial.release()
                         except Exception:
                             pass
-            except TimeoutError:
-                pass
-            for fut in futs:
-                if not fut.done():
-                    fut.cancel()
 
-        if best is not None and best[2] >= 35.0:
-            return best[0], best[1]
-
-        # Fallback: sequential scan other indices (avoid hammering the driver).
-        for idx in [i for i in range(0, 4) if i != preferred]:
-            if self._stop.is_set() or gen != self._generation:
-                break
-            for backend in backends:
-                got = self._open_one(idx, backend, gen)
-                if not got:
-                    continue
-                trial, used, score = got
-                if best is None or score > best[2]:
-                    if best is not None:
-                        try:
-                            best[0].release()
-                        except Exception:
-                            pass
-                    best = (trial, used, score)
-                    if score >= 40.0:
-                        return trial, used
-                else:
-                    try:
-                        trial.release()
-                    except Exception:
-                        pass
-
-        if best is None:
-            return None, preferred
-        return best[0], best[1]
+        print("  Webcam   open failed on all indices/backends", flush=True)
+        return None, preferred
 
     def _loop(self, gen: int) -> None:
         import cv2
+
+        self._init_com_for_camera()
 
         ai_error = ""
         try:

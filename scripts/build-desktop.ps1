@@ -46,6 +46,7 @@ pyinstaller `
   --hidden-import sklearn.ensemble `
   --hidden-import sklearn.ensemble._forest `
   --hidden-import intelliQuiz_desktop.build_info `
+  --collect-all cv2 `
   --collect-all mediapipe `
   --collect-all sklearn `
   --collect-all joblib `

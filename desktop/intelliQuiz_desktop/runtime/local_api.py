@@ -216,6 +216,64 @@ def create_app(controller: SessionController | None = None) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/debug/camera")
+    def debug_camera() -> dict[str, Any]:
+        """Diagnose OpenCV webcam open inside this process (frozen EXE vs source)."""
+        import sys
+        import time
+
+        import cv2
+
+        report: dict[str, Any] = {
+            "frozen": bool(getattr(sys, "frozen", False)),
+            "cv2_file": getattr(cv2, "__file__", ""),
+            "cv2_version": getattr(cv2, "__version__", ""),
+            "meipass": str(getattr(sys, "_MEIPASS", "")),
+            "attempts": [],
+        }
+        try:
+            import ctypes
+
+            ctypes.windll.ole32.CoInitializeEx(None, 0x0)
+            report["com"] = "ok"
+        except Exception as exc:
+            report["com"] = str(exc)
+
+        backends = [
+            ("DSHOW", getattr(cv2, "CAP_DSHOW", 700)),
+            ("MSMF", getattr(cv2, "CAP_MSMF", 1400)),
+            ("ANY", 0),
+        ]
+        for name, be in backends:
+            row: dict[str, Any] = {"backend": name, "backend_id": be}
+            cap = None
+            try:
+                cap = cv2.VideoCapture(0, be)
+                row["opened"] = bool(cap.isOpened())
+                if cap.isOpened():
+                    ok, frm = False, None
+                    mean = None
+                    for _ in range(10):
+                        ok, frm = cap.read()
+                        if ok and frm is not None:
+                            mean = float(frm.mean())
+                            break
+                        time.sleep(0.05)
+                    row["read_ok"] = bool(ok)
+                    row["mean"] = mean
+                    row["shape"] = list(frm.shape) if ok and frm is not None else None
+            except Exception as exc:
+                row["error"] = str(exc)
+            finally:
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+            report["attempts"].append(row)
+            time.sleep(0.2)
+        return report
+
     @app.get("/api/camera.jpg")
     def camera_jpeg(source: str = "auto") -> Response:
         """Serve a live JPEG. source=webcam|phone|auto.

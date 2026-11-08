@@ -63,6 +63,10 @@ HELPER_BLACKLIST = {
     "ms-teams",
     "msteams",
     "cursor",
+    "cursor helper",
+    "cursor helper (gpu)",
+    "cursor helper (renderer)",
+    "cursor helper (plugin)",
     "code",
     "devenv",
     "winrar",
@@ -94,8 +98,8 @@ PROTECTED_NAMES = {
 }
 
 # Optional lab protect list (enabled via IQ_DESKTOP_APP_LOCK_PROTECT_DEV=true).
+# Cursor is intentionally omitted — exams always close it with other helper apps.
 DEV_PROTECT_NAMES = {
-    "cursor",
     "code",
     "devenv",
 }
@@ -329,7 +333,15 @@ def list_prohibited(
             continue
         if exe in PROTECTED_NAMES:
             continue
-        if exe in HARD_BLACKLIST or exe.replace(" ", "") in HARD_BLACKLIST or exe in extra_hard or exe in HELPER_BLACKLIST:
+        # Cursor / Electron helpers often use names like "Cursor Helper (GPU)".
+        cursor_family = exe == "cursor" or exe.startswith("cursor ")
+        if (
+            exe in HARD_BLACKLIST
+            or exe.replace(" ", "") in HARD_BLACKLIST
+            or exe in extra_hard
+            or exe in HELPER_BLACKLIST
+            or cursor_family
+        ):
             hits.append(ProcessHit(name=exe, pid=pid, category="hard"))
         elif include_browsers and (exe in BROWSER_BLACKLIST or exe in extra_browser):
             hits.append(ProcessHit(name=exe, pid=pid, category="browser"))

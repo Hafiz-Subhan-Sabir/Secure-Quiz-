@@ -175,7 +175,6 @@
       <p class="done-note" id="doneNote">Paired ✓ — leave this screen open. Continue on the computer.</p>
       <div class="footer">
         <button class="primary" type="button" id="btnStart">Allow camera &amp; pair</button>
-        <button class="ghost" type="button" id="btnFlip">Flip camera</button>
         <p class="status" id="status">Connecting to exam PC…</p>
       </div>
     </div>
@@ -188,15 +187,15 @@
 
       const $ = (id) => document.getElementById(id);
       let stream = null;
-      // Face enrollment needs the front camera; exam room monitoring uses the back camera.
-      let facing = (sessionId || "").startsWith("enroll-") ? "user" : "environment";
+      // Always use the front (selfie) camera — flipping lenses drops the stream on many phones.
+      const facing = "user";
       let ws = null;
       let paired = false;
       let frameTimer = null;
       let aliveTimer = null;
-      /** True while intentionally stopping/restarting camera (flip / Allow again). */
+      /** True while intentionally stopping/restarting camera (Allow again). */
       let cameraRestarting = false;
-      /** Ignore motion false-positives right after a camera switch. */
+      /** Ignore motion false-positives right after a camera restart. */
       let motionGraceUntil = 0;
 
       function setBanner(text, cls) {
@@ -249,36 +248,50 @@
         stream = null;
       }
 
-      async function resolveDeviceId(wantFacing) {
+      async function resolveFrontDeviceId() {
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
           const cams = devices.filter((d) => d.kind === "videoinput");
           if (!cams.length) return null;
-          const wantFront = wantFacing === "user";
           const match = cams.find((d) => {
             const label = (d.label || "").toLowerCase();
-            if (wantFront) {
-              return label.includes("front") || label.includes("user") || label.includes("facing front");
-            }
             return (
-              label.includes("back") ||
-              label.includes("rear") ||
-              label.includes("environment") ||
-              label.includes("facing back")
+              label.includes("front") ||
+              label.includes("user") ||
+              label.includes("facing front") ||
+              label.includes("selfie")
             );
           });
           if (match) return match.deviceId;
-          // Fallback: many Androids list back first, front second.
-          if (cams.length >= 2) return wantFront ? cams[cams.length - 1].deviceId : cams[0].deviceId;
+          // Many phones list back first, front last — prefer last when unlabeled.
+          if (cams.length >= 2) return cams[cams.length - 1].deviceId;
           return cams[0].deviceId;
         } catch {
           return null;
         }
       }
 
-      async function openCameraStream(wantFacing) {
-        const deviceId = await resolveDeviceId(wantFacing);
-        const tries = [];
+      async function openCameraStream() {
+        // Prefer facingMode first — most reliable for front camera without a prior flip.
+        const tries = [
+          {
+            audio: false,
+            video: {
+              facingMode: { ideal: "user" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          },
+          {
+            audio: false,
+            video: {
+              facingMode: { exact: "user" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          },
+        ];
+        const deviceId = await resolveFrontDeviceId();
         if (deviceId) {
           tries.push({
             audio: false,
@@ -288,24 +301,17 @@
               height: { ideal: 720 },
             },
           });
+          tries.push({
+            audio: false,
+            video: {
+              deviceId: { ideal: deviceId },
+              facingMode: { ideal: "user" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          });
         }
-        tries.push({
-          audio: false,
-          video: {
-            facingMode: { exact: wantFacing },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-        });
-        tries.push({
-          audio: false,
-          video: {
-            facingMode: { ideal: wantFacing },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-        });
-        tries.push({ audio: false, video: true });
+        tries.push({ audio: false, video: { facingMode: "user" } });
         let lastErr = null;
         for (const constraints of tries) {
           try {
@@ -314,15 +320,15 @@
             lastErr = err;
           }
         }
-        throw lastErr || new Error("Camera unavailable");
+        throw lastErr || new Error("Front camera unavailable");
       }
 
       function bindStream(nextStream) {
         stream = nextStream;
         const video = $("preview");
         video.srcObject = stream;
-        // Mirror only the front camera for a natural selfie view.
-        video.style.transform = facing === "user" ? "scaleX(-1)" : "none";
+        // Mirror front camera for a natural selfie view.
+        video.style.transform = "scaleX(-1)";
         stream.getVideoTracks().forEach((track) => {
           track.onended = () => {
             if (cameraRestarting) return;
@@ -332,14 +338,13 @@
       }
 
       function refreshPairedUi() {
-        const camLabel = facing === "environment" ? "back camera (room)" : "front camera";
         $("btnStart").textContent = paired ? "Camera locked" : "Camera on — pairing…";
         setBanner(
-          paired ? "Camera locked for exam" : "Camera on — pairing with exam PC…",
+          paired ? "Front camera locked for exam" : "Front camera on — pairing with exam PC…",
           paired ? "ok" : "wait",
         );
         $("status").textContent = paired
-          ? `Paired · ${camLabel} — keep this page open`
+          ? "Paired · front camera — keep this page open"
           : "Connecting…";
         if (paired) $("doneNote").classList.add("show");
       }
@@ -350,8 +355,7 @@
         sendJson({ type: "camera_alive" });
       }
 
-      async function startCamera(options) {
-        const isFlip = !!(options && options.flip);
+      async function startCamera() {
         // Phones block getUserMedia on plain http://LAN — must be https://
         if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           setBanner("Camera blocked by the phone (needs HTTPS)", "err");
@@ -364,12 +368,11 @@
         cameraRestarting = true;
         motionGraceUntil = Date.now() + 4500;
         lastMotionSample = null;
-        const previousFacing = facing;
         try {
           stopStreamQuiet();
-          // Brief pause so Android releases the previous lens before flip.
-          if (isFlip) await new Promise((r) => setTimeout(r, 350));
-          const nextStream = await openCameraStream(facing);
+          // Short release so Android can reopen the front lens cleanly.
+          await new Promise((r) => setTimeout(r, 200));
+          const nextStream = await openCameraStream();
           bindStream(nextStream);
           refreshPairedUi();
           connectWs();
@@ -381,23 +384,6 @@
           lastMotionSample = null;
           return true;
         } catch (err) {
-          // Flip failed — restore previous camera; do NOT unpair.
-          if (isFlip) {
-            facing = previousFacing;
-            try {
-              const fallback = await openCameraStream(facing);
-              bindStream(fallback);
-              refreshPairedUi();
-              ensurePairedSignal();
-              setBanner("Could not flip — kept previous camera (still paired)", "wait");
-              $("status").textContent = String(err.message || err);
-              cameraRestarting = false;
-              motionGraceUntil = Date.now() + 3000;
-              return false;
-            } catch {
-              /* fall through to soft error without unpairing if still paired */
-            }
-          }
           cameraRestarting = false;
           if (paired) {
             setBanner("Camera restart failed — tap Allow camera again (still paired)", "err");
@@ -406,9 +392,9 @@
             return false;
           }
           notifyLost("Camera permission denied");
-          setBanner("Camera blocked — tap Allow and try again", "err");
+          setBanner("Front camera blocked — tap Allow and try again", "err");
           $("status").textContent = String(err.message || err);
-          $("btnStart").textContent = "Try again — allow camera";
+          $("btnStart").textContent = "Try again — allow front camera";
           return false;
         }
       }
@@ -551,7 +537,7 @@
               plain_language:
                 "Phone camera looks covered or pointing away (too dark/bright). Cheating attempt logged.",
             });
-            setBanner("Keep camera on the room — do not cover or flip away", "err");
+            setBanner("Keep front camera clear — do not cover the lens", "err");
           }
           lastMotionSample = gray;
           return;
@@ -571,7 +557,7 @@
                 plain_language:
                   "Phone camera moved suddenly during the exam. Cheating attempt logged for admin.",
               });
-              setBanner("Phone moved — keep it steady facing the room", "err");
+              setBanner("Phone moved — keep front camera steady", "err");
             }
           }
         }
@@ -632,22 +618,7 @@
         if (paired) reportAppSwitch("Phone camera page was frozen / backgrounded.");
       });
 
-      $("btnStart").onclick = () => startCamera({ flip: false });
-      $("btnFlip").onclick = async () => {
-        if (cameraRestarting) return;
-        // Flip only switches lens — do not unpair or flag as camera lost.
-        const next = facing === "environment" ? "user" : "environment";
-        facing = next;
-        setBanner("Switching camera…", "wait");
-        $("status").textContent =
-          next === "environment" ? "Opening back camera…" : "Opening front camera…";
-        $("btnFlip").disabled = true;
-        try {
-          await startCamera({ flip: true });
-        } finally {
-          $("btnFlip").disabled = false;
-        }
-      };
+      $("btnStart").onclick = () => startCamera();
 
       // Motion check while paired
       setInterval(sampleMotion, 900);

@@ -1,9 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('F:/Subhan/Intelligence Quiz/desktop/intelliQuiz_desktop/ui', 'intelliQuiz_desktop/ui'), ('F:/Subhan/Intelligence Quiz/desktop/intelliQuiz_desktop/models', 'intelliQuiz_desktop/models'), ('F:/Subhan/Intelligence Quiz/ml/artifacts/models/best_model.joblib', 'ml/artifacts/models')]
+datas = [('D:/Secure Quiz/Inteli Quiz/Intelligence Quiz/desktop/intelliQuiz_desktop/ui', 'intelliQuiz_desktop/ui'), ('D:/Secure Quiz/Inteli Quiz/Intelligence Quiz/desktop/intelliQuiz_desktop/models', 'intelliQuiz_desktop/models'), ('D:/Secure Quiz/Inteli Quiz/Intelligence Quiz/ml/artifacts/models/best_model.joblib', 'ml/artifacts/models')]
 binaries = []
 hiddenimports = ['mediapipe', 'cv2', 'sklearn', 'sklearn.ensemble', 'sklearn.ensemble._forest', 'intelliQuiz_desktop.build_info']
+tmp_ret = collect_all('cv2')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('mediapipe')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('sklearn')

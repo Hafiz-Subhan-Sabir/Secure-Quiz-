@@ -19,6 +19,10 @@ from intelliQuiz_desktop.sync.worker import SyncWorker
 
 def _bootstrap_frozen() -> None:
     """Make double-click launches reliable (cwd + bundle checks)."""
+    # Must be set before OpenCV is imported — MSMF HW transforms often break
+    # webcam open inside PyInstaller bundles even when Camera app works.
+    os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+    os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_MSMF", "0")
     if not getattr(sys, "frozen", False):
         return
     exe_dir = Path(sys.executable).resolve().parent
@@ -26,6 +30,10 @@ def _bootstrap_frozen() -> None:
         os.chdir(exe_dir)
     except OSError:
         pass
+    # Help OpenCV find its ffmpeg/videoio plugin next to cv2.pyd
+    cv2_dir = exe_dir / "_internal" / "cv2"
+    if cv2_dir.is_dir():
+        os.environ["PATH"] = str(cv2_dir) + os.pathsep + os.environ.get("PATH", "")
     internal = exe_dir / "_internal"
     if not internal.is_dir():
         print("ERROR: Missing _internal folder next to IntelliQuizDesktop.exe")
